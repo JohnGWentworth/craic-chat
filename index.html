@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Craic | Good Times & Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #313338; color: #dbdee1; font-family: 'gg sans', 'Helvetica Neue', Helvetica, Arial, sans-serif; overflow: hidden; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; background-color: #2b2d31; }
+        ::-webkit-scrollbar-thumb { background-color: #1a1b1e; border-radius: 4px; }
+        ::-webkit-scrollbar-track { background-color: #2b2d31; }
+        .server-icon { transition: all 0.2s; }
+        .server-icon:hover { border-radius: 16px; background-color: #23a559; }
+        .server-active { border-radius: 16px; background-color: #23a559; }
+        .channel-item:hover { background-color: #35373c; color: #dbdee1; }
+        .channel-active { background-color: #404249; color: white; }
+        .tooltip { visibility: hidden; position: absolute; left: 80px; background: #111; padding: 4px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap; z-index: 50; font-weight: bold; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); opacity: 0; transition: opacity 0.1s; pointer-events: none; }
+        .group:hover .tooltip { visibility: visible; opacity: 1; }
+        .tooltip::before { content: ""; position: absolute; top: 50%; right: 100%; margin-top: -5px; border-width: 5px; border-style: solid; border-color: transparent #111 transparent transparent; }
+        .md-code { background-color: #2b2d31; padding: 2px 4px; border-radius: 3px; font-family: monospace; font-size: 0.85em; }
+        .md-pre { background-color: #2b2d31; padding: 8px; border-radius: 4px; margin-top: 4px; font-family: monospace; overflow-x: auto; border: 1px solid #1e1f22; }
+        .md-quote { border-left: 4px solid #4e5058; padding-left: 8px; color: #949ba4; margin: 4px 0; }
+        .message-actions { opacity: 0; transition: opacity 0.1s; }
+        .group:hover .message-actions { opacity: 1; }
+        .mobile-sidebar { transition: transform 0.3s ease-in-out; }
+        .mobile-open { transform: translateX(0) !important; }
+        .loader { border: 2px solid #f3f3f3; border-top: 2px solid #23a559; border-radius: 50%; width: 14px; height: 14px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .reaction { background-color: #2b2d31; border-radius: 8px; padding: 2px 6px; font-size: 12px; cursor: pointer; display: flex; items-center; border: 1px solid transparent; transition: all 0.1s; user-select: none; }
+        .reaction:hover { background-color: #35373c; border-color: #4e5058; }
+        .reaction.active { background-color: rgba(35, 165, 89, 0.15); border-color: #23a559; }
+        .reaction-picker { animation: popIn 0.1s ease-out; }
+        @keyframes popIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .typing-dots span { width: 6px; height: 6px; background-color: #dbdee1; border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite ease-in-out both; margin: 0 1px; }
+        .typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+        audio { height: 32px; width: 250px; }
+        .date-divider { display: flex; align-items: center; justify-content: center; margin: 24px 0; position: relative; }
+        .date-divider::before { content: ""; height: 1px; background: #3f4147; position: absolute; left: 0; right: 0; z-index: 0; }
+        .date-divider span { background: #313338; padding: 0 8px; color: #949ba4; font-size: 12px; font-weight: 600; z-index: 1; }
+        
+        /* Voice Active Glow */
+        .voice-avatar-speaking { box-shadow: 0 0 0 2px #23a559; border-color: transparent !important; }
+        .voice-connected-bar { background-color: #232428; border-top: 1px solid #1f2023; padding: 8px 10px; }
+    </style>
+</head>
+<body class="flex h-screen w-screen bg-[#313338]">
+
+    <audio id="sound-msg" src="https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3"></audio>
+    <audio id="sound-voice-join" src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3"></audio>
+    <audio id="sound-voice-leave" src="https://assets.mixkit.co/active_storage/sfx/2359/2359-preview.mp3"></audio>
+    <input type="file" id="file-upload" class="hidden" accept="image/*">
+    
+    <!-- Hidden Voice Elements -->
+    <div id="voice-streams" class="hidden"></div>
+
+    <!-- GENERIC INPUT MODAL -->
+    <div id="generic-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-200">
+        <div class="bg-[#313338] w-full max-w-sm rounded-lg shadow-2xl p-6 transform scale-95 transition-transform duration-200" id="generic-modal-content">
+            <h3 id="modal-title" class="text-xl font-bold text-white mb-4">Title</h3>
+            <p id="modal-desc" class="text-[#dbdee1] text-sm mb-4">Description</p>
+            <input type="text" id="modal-input" class="w-full bg-[#1e1f22] text-white p-2 rounded outline-none focus:ring-2 focus:ring-[#23a559] mb-6 hidden">
+            <div class="flex justify-end space-x-2">
+                <button onclick="closeGenericModal()" class="px-4 py-2 text-white hover:underline text-sm">Cancel</button>
+                <button id="modal-confirm-btn" class="bg-[#23a559] hover:bg-[#1b8045] text-white px-4 py-2 rounded text-sm font-medium transition-colors">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- USER POPUP -->
+    <div id="user-popup" class="fixed z-50 hidden" style="width: 300px;">
+        <div class="bg-[#232428] rounded-lg shadow-2xl overflow-hidden border border-[#1e1f22]">
+            <div class="h-16 bg-[#23a559]"></div>
+            <div class="px-4 pb-4 relative">
+                <img id="popup-avatar" src="" class="w-20 h-20 rounded-full border-[6px] border-[#232428] absolute -top-10">
+                <div class="mt-12">
+                    <h3 id="popup-username" class="text-xl font-bold text-white"></h3>
+                    <div class="border-t border-[#3f4147] my-3"></div>
+                    <button onclick="startDM()" class="w-full bg-[#23a559] hover:bg-[#1b8045] text-white py-2 rounded text-sm font-medium transition-colors">Send Message</button>
+                </div>
+            </div>
+        </div>
+        <div class="fixed inset-0 -z-10" onclick="document.getElementById('user-popup').classList.add('hidden')"></div>
+    </div>
+
+    <!-- SETTINGS MODAL -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-200">
+        <div class="bg-[#313338] w-full max-w-md rounded-lg shadow-2xl transform scale-95 transition-transform duration-200 m-4" id="settings-content">
+            <div class="p-6">
+                <h2 class="text-xl font-bold text-white mb-6">User Settings</h2>
+                <div class="flex justify-center mb-6">
+                    <div class="relative group cursor-pointer">
+                        <img id="settings-avatar-preview" src="" class="w-24 h-24 rounded-full border-4 border-[#1e1f22]">
+                        <div class="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-camera text-white"></i></div>
+                    </div>
+                </div>
+                <div class="space-y-4">
+                    <div><label class="block text-xs font-bold text-[#b5bac1] uppercase mb-2">Display Name</label><input type="text" id="settings-username" class="w-full bg-[#1e1f22] text-[#dbdee1] p-2.5 rounded border-none outline-none focus:ring-2 focus:ring-[#23a559]"></div>
+                    <div><label class="block text-xs font-bold text-[#b5bac1] uppercase mb-2">Avatar URL</label><input type="text" id="settings-avatar-url" class="w-full bg-[#1e1f22] text-[#dbdee1] p-2.5 rounded border-none outline-none focus:ring-2 focus:ring-[#23a559]"></div>
+                </div>
+            </div>
+            <div class="bg-[#2b2d31] p-4 rounded-b-lg flex justify-end space-x-3">
+                <button onclick="closeSettings()" class="px-4 py-2 text-white hover:underline text-sm font-medium">Cancel</button>
+                <button onclick="saveSettings()" class="bg-[#23a559] hover:bg-[#1b8045] text-white px-6 py-2 rounded text-sm font-medium transition-colors">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="mobile-overlay" onclick="toggleMobileMenu()" class="fixed inset-0 bg-black/50 z-30 hidden md:hidden"></div>
+
+    <div id="sidebar-container" class="mobile-sidebar fixed inset-y-0 left-0 z-40 flex transform -translate-x-full md:relative md:translate-x-0 h-full">
+        <nav class="w-[72px] bg-[#1e1f22] flex flex-col items-center py-3 overflow-y-auto space-y-2 no-scrollbar z-20 h-full" id="server-list">
+            <div onclick="switchToHome()" class="group relative flex justify-center w-full cursor-pointer mb-2">
+                <div id="pill-home" class="absolute left-0 top-3 h-2 w-1 bg-white rounded-r-full transition-all h-10"></div>
+                <div id="icon-home" class="h-12 w-12 bg-[#23a559] rounded-[16px] flex items-center justify-center text-white server-icon transition-all"><i class="fa-solid fa-comments text-xl"></i></div>
+            </div>
+            <hr class="w-8 border-[#35363c] mx-auto rounded mb-2">
+            <div id="dynamic-servers"></div>
+            <div onclick="openCreateServerModal()" class="group relative flex justify-center w-full cursor-pointer mt-2">
+                <div class="h-12 w-12 bg-[#313338] rounded-[24px] flex items-center justify-center text-[#23a559] hover:text-white server-icon transition-all"><i class="fa-solid fa-plus text-xl"></i></div>
+                <span class="tooltip">Create Server</span>
+            </div>
+            <div onclick="openJoinServerModal()" class="group relative flex justify-center w-full cursor-pointer mt-2">
+                <div class="h-12 w-12 bg-[#313338] rounded-[24px] flex items-center justify-center text-[#b5bac1] hover:text-white server-icon transition-all"><i class="fa-solid fa-compass text-xl"></i></div>
+                <span class="tooltip">Join Server</span>
+            </div>
+        </nav>
+
+        <aside class="w-60 bg-[#2b2d31] flex flex-col min-w-[240px] h-full" id="middle-sidebar">
+            <header class="h-12 px-4 flex items-center justify-between shadow-sm border-b border-[#1f2023] hover:bg-[#35373c] cursor-pointer transition-colors" onclick="copyServerInvite()">
+                <h1 class="font-bold text-[15px] truncate text-white" id="sidebar-header">Direct Messages</h1>
+                <i class="fa-solid fa-chevron-down text-xs" id="header-icon"></i>
+            </header>
+            <div class="flex-1 overflow-y-auto pt-3 px-2 space-y-1" id="channel-list"></div>
+            
+            <!-- VOICE CONNECTED BAR -->
+            <div id="voice-connected-bar" class="hidden voice-connected-bar flex flex-col">
+                <div class="flex items-center justify-between mb-1">
+                    <div class="flex flex-col">
+                        <span class="text-[#23a559] text-xs font-bold flex items-center"><i class="fa-solid fa-signal mr-1"></i> Voice Connected</span>
+                        <span id="voice-channel-name" class="text-[#949ba4] text-[11px] truncate w-24">General</span>
+                    </div>
+                    <div class="flex space-x-1">
+                        <button onclick="disconnectVoice()" class="h-8 w-8 flex items-center justify-center rounded hover:bg-[#3f4147] text-[#ed4245] transition-colors"><i class="fa-solid fa-phone-slash"></i></button>
+                    </div>
+                </div>
+                <div class="flex justify-between px-1">
+                    <button id="btn-voice-mute" onclick="toggleVoiceMute()" class="text-[#dbdee1] hover:text-white text-xs bg-[#1e1f22] px-2 py-1 rounded w-[48%] flex justify-center items-center"><i class="fa-solid fa-microphone mr-1"></i> <span>Mute</span></button>
+                    <button id="btn-voice-deafen" onclick="toggleVoiceDeafen()" class="text-[#dbdee1] hover:text-white text-xs bg-[#1e1f22] px-2 py-1 rounded w-[48%] flex justify-center items-center"><i class="fa-solid fa-headphones mr-1"></i> <span>Deafen</span></button>
+                </div>
+            </div>
+
+            <div class="h-[52px] bg-[#232428] px-2 flex items-center justify-between flex-shrink-0">
+                <div onclick="openSettings()" class="flex items-center p-1 hover:bg-[#3f4147] rounded cursor-pointer group select-none">
+                    <div class="relative mr-2"><img id="user-avatar" src="https://api.dicebear.com/7.x/avataaars/svg?seed=init" class="w-8 h-8 rounded-full bg-gray-600"><div class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#23a559] rounded-full border-[2px] border-[#232428]"></div></div>
+                    <div class="text-sm"><div class="font-bold text-white text-[13px] w-20 truncate" id="user-name">Loading...</div><div class="text-xs text-[#949ba4]">Online</div></div>
+                </div>
+                <div class="flex"><div onclick="openSettings()" class="h-8 w-8 flex items-center justify-center hover:bg-[#3f4147] rounded cursor-pointer"><i class="fa-solid fa-gear text-sm"></i></div></div>
+            </div>
+        </aside>
+    </div>
+
+    <main class="flex-1 flex flex-col min-w-0 bg-[#313338] h-full w-full">
+        <header class="h-12 px-4 flex items-center shadow-sm border-b border-[#26272d] flex-shrink-0">
+            <button onclick="toggleMobileMenu()" class="md:hidden mr-4 text-[#dbdee1]"><i class="fa-solid fa-bars text-xl"></i></button>
+            <div class="text-[#80848e] mr-2 text-xl" id="chat-icon"><i class="fa-solid fa-at"></i></div>
+            <h3 class="font-bold text-white mr-4 whitespace-nowrap overflow-hidden text-ellipsis" id="channel-header">Craic Bot</h3>
+            <span class="hidden md:block text-[#949ba4] text-xs px-2 truncate border-l border-[#3f4147]" id="channel-topic">Direct Message</span>
+        </header>
+        <div id="messages-container" class="flex-1 overflow-y-auto px-4 pt-4 space-y-4 flex flex-col">
+            <div class="mt-auto"></div>
+        </div>
+        <div class="px-4 pb-6 pt-2">
+            <div id="typing-indicator" class="h-6 text-xs text-[#dbdee1] font-bold px-2 flex items-center opacity-0 transition-opacity">
+                <div class="typing-dots mr-1"><span></span><span></span><span></span></div>
+                <span id="typing-names">Someone is typing...</span>
+            </div>
+            <div class="bg-[#383a40] rounded-lg px-4 py-3 flex items-center relative transition-colors" id="input-container">
+                <div onclick="document.getElementById('file-upload').click()" class="bg-[#b5bac1] rounded-full h-6 w-6 flex items-center justify-center mr-3 cursor-pointer hover:text-white text-[#383a40] flex-shrink-0"><i class="fa-solid fa-plus text-xs"></i></div>
+                <input type="text" id="message-input" placeholder="Message @Craic Bot" class="bg-transparent text-[#dbdee1] flex-1 outline-none placeholder-[#949ba4]" autocomplete="off">
+                <div onclick="toggleRecording()" id="mic-btn" class="text-[#b5bac1] hover:text-white cursor-pointer ml-3 flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#3f4147] transition-all"><i class="fa-solid fa-microphone"></i></div>
+                <div id="upload-spinner" class="loader hidden ml-2"></div>
+            </div>
+        </div>
+    </main>
+
+    <aside class="w-60 bg-[#2b2d31] hidden lg:flex flex-col p-4 border-l border-[#26272d]">
+        <h3 class="text-[#949ba4] text-xs font-bold uppercase mb-4 px-2">Online Members — <span id="member-count">0</span></h3>
+        <div id="member-list"></div>
+    </aside>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, updateProfile, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, where, doc, setDoc, deleteDoc, updateDoc, arrayUnion, arrayRemove, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
+
+        let firebaseConfig, APP_ID;
+        if (typeof __firebase_config !== 'undefined') {
+            firebaseConfig = JSON.parse(__firebase_config);
+            APP_ID = typeof __app_id !== 'undefined' ? __app_id : "vanish-chat-public-v1";
+        } else {
+            const firebaseConfig = {
+  apiKey: "AIzaSyCNE-cWIo2Ofr0spW1czbtJMSXs2mcaVpY",
+  authDomain: "craic-chat-50d71.firebaseapp.com",
+  projectId: "craic-chat-50d71",
+  storageBucket: "craic-chat-50d71.firebasestorage.app",
+  messagingSenderId: "1054605077942",
+  appId: "1:1054605077942:web:e44b8aa557c60e085ca517",
+  measurementId: "G-50T5S1NKR4"
+};
+
+            APP_ID = "vanish-chat-public-v1";
+        }
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        let storage; try { storage = getStorage(app); } catch(e) {}
+
+        let currentUser = null;
+        let activeServerId = null;
+        let activeServerOwnerId = null;
+        let activeChannelId = null;
+        let servers = []; let channels = [];
+        let isHome = true;
+        let channelMembers = new Map();
+        let openDMs = JSON.parse(localStorage.getItem('echo_dms') || '[]');
+        let selectedUserForDM = null;
+        let typingTimeout = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+        let lastMsgDate = null;
+        
+        let currentVoiceChannelId = null;
+        let voiceParticipants = new Map(); 
+        
+        // WebRTC Globals
+        let localStream = null;
+        let peerConnections = {}; // Map: userId -> RTCPeerConnection
+        let voiceMuted = false;
+        let voiceDeafened = false;
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+        // Realtime Online Status
+        let onlineMembers = new Map();
+
+        const sndMsg = document.getElementById('sound-msg');
+        const sndVJoin = document.getElementById('sound-voice-join');
+        const sndVLeave = document.getElementById('sound-voice-leave');
+        
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+             signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
+        } else { signInAnonymously(auth).catch(console.error); }
+
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                const savedName = localStorage.getItem('vc_username');
+                if (!user.displayName && !savedName) {
+                    const rand = Math.floor(Math.random() * 9999);
+                    await updateProfile(user, { displayName: `User${rand}`, photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${rand}` });
+                } else if (!user.displayName && savedName) await updateProfile(user, { displayName: savedName });
+                currentUser = user;
+                updateUserUI();
+                initDataListeners();
+                initVoiceStates(); 
+                initPresenceHeartbeat();
+                initVoiceSignaling(); // Listen for calls
+                
+                const urlParams = new URLSearchParams(window.location.search);
+                const joinId = urlParams.get('join');
+                if(joinId) { 
+                    openGenericModal("Join Server", "Connect to community?", "", () => switchServer(joinId), true);
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                } else if(isHome) switchToHome();
+            }
+        });
+
+        // --- PRESENCE & HEARTBEAT ---
+        function initPresenceHeartbeat() {
+            const reportPresence = async () => {
+                if(!currentUser) return;
+                try {
+                    await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'users', currentUser.uid), {
+                        username: currentUser.displayName, avatar: currentUser.photoURL, lastSeen: Date.now(), serverId: activeServerId
+                    });
+                } catch(e) {}
+            };
+            reportPresence();
+            setInterval(reportPresence, 60000);
+            const qUsers = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'users'));
+            onSnapshot(qUsers, (snapshot) => {
+                onlineMembers.clear();
+                const now = Date.now();
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    if(now - data.lastSeen < 150000) onlineMembers.set(doc.id, { ...data, uid: doc.id });
+                });
+                renderMemberList();
+            });
+        }
+
+        // --- VOICE: UI & STATE ---
+        function initVoiceStates() {
+            const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states'));
+            onSnapshot(q, (snapshot) => {
+                voiceParticipants.clear();
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    if(Date.now() - data.lastSeen < 1800000) voiceParticipants.set(data.userId, data);
+                });
+                renderChannelList(); 
+                // Auto-connect flow for mesh? (New joiners call existing)
+            });
+        }
+
+        window.joinVoice = async (channelId, channelName) => {
+            if(currentVoiceChannelId === channelId) return;
+            if(currentVoiceChannelId) await disconnectVoice();
+            
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                localStream.getAudioTracks()[0].enabled = !voiceMuted;
+            } catch(e) { 
+                console.error("Mic Error:", e); 
+                alert("Cannot access microphone. Please allow permissions.");
+                return;
+            }
+
+            currentVoiceChannelId = channelId;
+            sndVJoin.play().catch(()=>{});
+            document.getElementById('voice-connected-bar').classList.remove('hidden');
+            document.getElementById('voice-channel-name').textContent = channelName;
+            
+            // Set Presence
+            await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states', currentUser.uid), { 
+                userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL, 
+                channelId: channelId, serverId: activeServerId, lastSeen: Date.now() 
+            });
+
+            // Call everyone currently in this channel
+            const participants = Array.from(voiceParticipants.values()).filter(p => p.channelId === channelId && p.userId !== currentUser.uid);
+            participants.forEach(p => connectToPeer(p.userId, true));
+        };
+
+        window.disconnectVoice = async () => {
+            if(!currentVoiceChannelId) return;
+            sndVLeave.play().catch(()=>{});
+            
+            // Close all connections
+            Object.values(peerConnections).forEach(pc => pc.close());
+            peerConnections = {};
+            if(localStream) localStream.getTracks().forEach(track => track.stop());
+            localStream = null;
+
+            document.getElementById('voice-connected-bar').classList.add('hidden');
+            document.getElementById('voice-streams').innerHTML = ''; // Clear remote audios
+            
+            await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states', currentUser.uid));
+            currentVoiceChannelId = null;
+        };
+
+        window.toggleVoiceMute = () => {
+            voiceMuted = !voiceMuted;
+            if(localStream) localStream.getAudioTracks()[0].enabled = !voiceMuted;
+            const btn = document.getElementById('btn-voice-mute');
+            if(voiceMuted) { btn.innerHTML = '<i class="fa-solid fa-microphone-slash mr-1"></i> <span>Unmute</span>'; btn.classList.add('text-red-500'); }
+            else { btn.innerHTML = '<i class="fa-solid fa-microphone mr-1"></i> <span>Mute</span>'; btn.classList.remove('text-red-500'); }
+        };
+
+        window.toggleVoiceDeafen = () => {
+            voiceDeafened = !voiceDeafened;
+            const audios = document.querySelectorAll('#voice-streams audio');
+            audios.forEach(a => a.muted = voiceDeafened);
+            const btn = document.getElementById('btn-voice-deafen');
+            if(voiceDeafened) { btn.innerHTML = '<i class="fa-solid fa-headphones mr-1"></i> <span>Undeafen</span>'; btn.classList.add('text-red-500'); }
+            else { btn.innerHTML = '<i class="fa-solid fa-headphones mr-1"></i> <span>Deafen</span>'; btn.classList.remove('text-red-500'); }
+        };
+
+        // --- WEBRTC SIGNALING ---
+        function initVoiceSignaling() {
+            // Listen for signals meant for ME
+            const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals'), where('to', '==', currentUser.uid));
+            onSnapshot(q, (snapshot) => {
+                snapshot.docChanges().forEach(async (change) => {
+                    if(change.type === 'added') {
+                        const data = change.doc.data();
+                        await handleSignal(data, change.doc.id);
+                        // Delete signal after consuming to keep DB clean
+                        deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals', change.doc.id));
+                    }
+                });
+            });
+        }
+
+        async function connectToPeer(targetUserId, initiator = false) {
+            const pc = new RTCPeerConnection(config);
+            peerConnections[targetUserId] = pc;
+
+            // Add local stream
+            if(localStream) localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            // Handle remote stream
+            pc.ontrack = (event) => {
+                let audio = document.getElementById(`audio-${targetUserId}`);
+                if(!audio) {
+                    audio = document.createElement('audio');
+                    audio.id = `audio-${targetUserId}`;
+                    audio.autoplay = true;
+                    audio.muted = voiceDeafened; // Check global deafen
+                    document.getElementById('voice-streams').appendChild(audio);
+                }
+                audio.srcObject = event.streams[0];
+            };
+
+            // ICE Candidates
+            pc.onicecandidate = (event) => {
+                if(event.candidate) {
+                    sendSignal(targetUserId, { type: 'ice', candidate: event.candidate });
+                }
+            };
+
+            if(initiator) {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                sendSignal(targetUserId, { type: 'offer', sdp: offer });
+            }
+        }
+
+        async function handleSignal(data, sigId) {
+            // Ensure we have a PC
+            if(!peerConnections[data.from] && data.type !== 'offer') return; // Should allow 'ice' if PC exists? Yes. 
+            
+            let pc = peerConnections[data.from];
+            
+            if(data.type === 'offer') {
+                if(!pc) {
+                    await connectToPeer(data.from, false);
+                    pc = peerConnections[data.from];
+                }
+                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                sendSignal(data.from, { type: 'answer', sdp: answer });
+            } else if(data.type === 'answer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            } else if(data.type === 'ice') {
+                if(pc) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+        }
+
+        async function sendSignal(targetId, payload) {
+            await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals'), {
+                to: targetId, from: currentUser.uid, ...payload, timestamp: Date.now()
+            });
+        }
+
+        // --- EXISTING LOGIC BELOW (With Voice Integrations) ---
+        window.openGenericModal = (title, desc, placeholder, onConfirm, isConfirmOnly = false) => {
+            const modal = document.getElementById('generic-modal');
+            const content = document.getElementById('generic-modal-content');
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-desc').textContent = desc;
+            const input = document.getElementById('modal-input');
+            if(isConfirmOnly) input.classList.add('hidden');
+            else { input.classList.remove('hidden'); input.placeholder = placeholder || ""; input.value = ""; setTimeout(() => input.focus(), 100); }
+            const btn = document.getElementById('modal-confirm-btn');
+            const newBtn = btn.cloneNode(true);
+            btn.parentNode.replaceChild(newBtn, btn);
+            newBtn.onclick = () => { const val = input.value; if(!isConfirmOnly && !val) return; onConfirm(val); closeGenericModal(); };
+            input.onkeydown = (e) => { if(e.key === 'Enter') newBtn.click(); };
+            modal.classList.remove('hidden');
+            setTimeout(() => { modal.classList.remove('opacity-0'); content.classList.remove('scale-95'); content.classList.add('scale-100'); }, 10);
+        }
+        window.closeGenericModal = () => { const modal = document.getElementById('generic-modal'); const content = document.getElementById('generic-modal-content'); modal.classList.add('opacity-0'); content.classList.add('scale-95'); content.classList.remove('scale-100'); setTimeout(() => modal.classList.add('hidden'), 200); }
+
+        function initDataListeners() {
+            const qServers = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'servers'));
+            onSnapshot(qServers, (snapshot) => {
+                const sList = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
+                servers = sList.sort((a,b) => a.name.localeCompare(b.name));
+                renderServerList();
+                if(servers.length === 0) createDefaultData();
+            });
+        }
+        async function createDefaultData() {
+            const serverRef = await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'servers'), { name: "Craic Official", acronym: "CO", ownerId: 'system' });
+            await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'channels'), { name: "general", type: 'text', serverId: serverRef.id });
+            await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'channels'), { name: "Voice Lounge", type: 'voice', serverId: serverRef.id });
+        }
+
+        document.getElementById('file-upload').addEventListener('change', async (e) => {
+            const file = e.target.files[0]; if (!file || !storage) return;
+            document.getElementById('upload-spinner').classList.remove('hidden');
+            try {
+                const storageRef = ref(storage, `uploads/${APP_ID}/${Date.now()}_${file.name}`);
+                await uploadBytes(storageRef, file);
+                const url = await getDownloadURL(storageRef);
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'messages'), { content: url, timestamp: Date.now(), channelId: activeChannelId, userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL });
+            } catch (err) { console.error(err); alert("Upload failed."); } 
+            finally { document.getElementById('upload-spinner').classList.add('hidden'); e.target.value = ''; }
+        });
+
+        window.toggleRecording = async () => {
+            const micBtn = document.getElementById('mic-btn');
+            const inputContainer = document.getElementById('input-container');
+            const input = document.getElementById('message-input');
+            if (!isRecording) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+                    mediaRecorder.onstop = uploadAudio;
+                    mediaRecorder.start();
+                    isRecording = true;
+                    micBtn.classList.add('text-red-500', 'bg-red-900/20');
+                    micBtn.innerHTML = '<i class="fa-solid fa-stop"></i>';
+                    inputContainer.classList.add('border', 'border-red-500');
+                    input.placeholder = "Recording... click stop to send";
+                    input.disabled = true;
+                } catch (err) { console.error(err); alert("Could not access microphone."); }
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                micBtn.classList.remove('text-red-500', 'bg-red-900/20');
+                micBtn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+                inputContainer.classList.remove('border', 'border-red-500');
+                input.placeholder = `Message ${activeChannelId ? '#' : '@'}...`;
+                input.disabled = false;
+            }
+        };
+
+        const uploadAudio = async () => {
+            if(!storage) return alert("Storage not configured");
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const spinner = document.getElementById('upload-spinner');
+            spinner.classList.remove('hidden');
+            try {
+                const storageRef = ref(storage, `audio/${APP_ID}/${Date.now()}.webm`);
+                await uploadBytes(storageRef, audioBlob);
+                const url = await getDownloadURL(storageRef);
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'messages'), { 
+                    content: "🎤 Voice Message", audioUrl: url, timestamp: Date.now(), channelId: activeChannelId, userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL 
+                });
+            } catch (err) { console.error(err); } finally { spinner.classList.add('hidden'); }
+        };
+
+        window.editMessage = (docId, oldContent) => {
+            const contentDiv = document.querySelector(`#msg-${docId} .msg-content`);
+            if(!contentDiv) return;
+            const currentHtml = contentDiv.innerHTML;
+            contentDiv.innerHTML = `<form onsubmit="submitEdit(event, '${docId}')" class="mt-1"><input type="text" name="editInput" value="${oldContent.replace(/"/g, '&quot;')}" class="w-full bg-[#383a40] text-white p-2 rounded outline-none focus:ring-2 focus:ring-[#23a559] text-sm"><div class="text-xs text-[#949ba4] mt-1">escape to cancel • enter to save</div></form>`;
+            const input = contentDiv.querySelector('input');
+            input.focus();
+            input.onkeydown = (e) => { if(e.key === 'Escape') contentDiv.innerHTML = currentHtml; };
+        };
+
+        window.submitEdit = async (e, docId) => {
+            e.preventDefault();
+            const newContent = e.target.elements.editInput.value;
+            if(newContent.trim()) { await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'messages', docId), { content: newContent, edited: true }); }
+        };
+
+        function renderServerList() {
+            const container = document.getElementById('dynamic-servers'); container.innerHTML = '';
+            const hPill = document.getElementById('pill-home'); const hIcon = document.getElementById('icon-home');
+            if(isHome){ hPill.style.height='40px'; hPill.style.opacity='1'; hIcon.classList.add('bg-[#23a559]','rounded-[16px]'); hIcon.classList.remove('bg-[#313338]','rounded-[24px]'); }
+            else { hPill.style.height='8px'; hPill.style.opacity='0'; hIcon.classList.remove('bg-[#23a559]','rounded-[16px]'); hIcon.classList.add('bg-[#313338]','rounded-[24px]'); }
+            servers.forEach(s => {
+                const div = document.createElement('div'); div.className = "group relative flex justify-center w-full cursor-pointer mb-2"; div.onclick = () => switchServer(s.id);
+                const isActive = s.id === activeServerId;
+                div.innerHTML = `<div class="absolute left-0 top-1 w-1 bg-white rounded-r-full transition-all ${isActive ? 'h-10' : 'h-2 opacity-0 group-hover:opacity-100 group-hover:h-5'}"></div><div class="h-12 w-12 rounded-[24px] flex items-center justify-center text-white server-icon overflow-hidden transition-all ${isActive ? 'server-active bg-[#23a559] rounded-[16px]' : 'bg-[#313338]'}">${s.icon ? `<img src="${s.icon}" class="w-full h-full object-cover">` : `<span class="text-sm font-medium">${s.acronym || s.name.substring(0,2).toUpperCase()}</span>`}</div>`;
+                container.appendChild(div);
+            });
+        }
+
+        function renderChannelList() {
+            const list = document.getElementById('channel-list'); list.innerHTML = '';
+            if (isHome) {
+                list.innerHTML = `<div class="px-2 mb-2"><button class="w-full bg-[#1E1F22] text-[#949BA4] text-sm text-left px-2 py-1.5 rounded flex items-center">Find or start a conversation</button></div>`;
+                openDMs.forEach(dm => {
+                    const isActive = activeChannelId === dm.id;
+                    const div = document.createElement('div'); div.className = `flex items-center px-2 py-2 mx-0 rounded cursor-pointer group ${isActive ? 'bg-[#404249] text-white' : 'hover:bg-[#35373c] text-[#949ba4] hover:text-[#dbdee1]'}`; div.onclick = () => { switchChannel(dm.id, dm.name, true); toggleMobileMenu(false); };
+                    div.innerHTML = `<div class="relative mr-3"><img src="${dm.avatar}" class="w-8 h-8 rounded-full"><div class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-[2px] border-[#2b2d31]"></div></div><span class="font-medium">${dm.name}</span>${isActive ? '' : '<div onclick="event.stopPropagation(); removeDM(\''+dm.id+'\')" class="ml-auto opacity-0 group-hover:opacity-100 text-xs text-gray-500 hover:text-white">✕</div>'}`;
+                    list.appendChild(div);
+                });
+                return;
+            }
+
+            const isOwner = activeServerOwnerId === currentUser.uid;
+            
+            const catT = document.createElement('div'); catT.className = "px-4 mb-1 mt-2 flex items-center justify-between text-[#949ba4] hover:text-[#dbdee1] cursor-pointer group text-xs font-bold uppercase";
+            catT.innerHTML = `<span>Text Channels</span><i onclick="event.stopPropagation(); promptCreateChannel('text')" class="fa-solid fa-plus text-[12px] hover:text-white"></i>`;
+            list.appendChild(catT);
+            
+            channels.filter(c => !c.type || c.type === 'text').forEach(c => {
+                const div = document.createElement('div'); const isActive = c.id === activeChannelId;
+                div.className = `flex items-center px-2 py-1.5 mx-2 rounded cursor-pointer group mb-[1px] ${isActive ? 'bg-[#404249] text-white' : 'text-[#949ba4] hover:bg-[#35373c] hover:text-[#dbdee1]'}`;
+                div.innerHTML = `<i class="fa-solid fa-hashtag text-lg mr-1.5 text-[#80848e]"></i><span class="truncate font-medium flex-1">${c.name}</span>${isOwner ? `<i onclick="event.stopPropagation(); deleteChannel('${c.id}')" class="fa-solid fa-trash ml-auto text-[10px] opacity-0 group-hover:opacity-100 hover:text-red-500"></i>` : ''}`;
+                div.onclick = () => { switchChannel(c.id, c.name); toggleMobileMenu(false); };
+                list.appendChild(div);
+            });
+
+            const catV = document.createElement('div'); catV.className = "px-4 mb-1 mt-4 flex items-center justify-between text-[#949ba4] hover:text-[#dbdee1] cursor-pointer group text-xs font-bold uppercase";
+            catV.innerHTML = `<span>Voice Channels</span><i onclick="event.stopPropagation(); promptCreateChannel('voice')" class="fa-solid fa-plus text-[12px] hover:text-white"></i>`;
+            list.appendChild(catV);
+
+            channels.filter(c => c.type === 'voice').forEach(c => {
+                const div = document.createElement('div');
+                div.className = `flex items-center px-2 py-1.5 mx-2 rounded cursor-pointer group mb-[1px] text-[#949ba4] hover:bg-[#35373c] hover:text-[#dbdee1]`;
+                div.innerHTML = `<i class="fa-solid fa-volume-high text-lg mr-1.5 text-[#80848e]"></i><span class="truncate font-medium flex-1">${c.name}</span>`;
+                div.onclick = () => joinVoice(c.id, c.name);
+                list.appendChild(div);
+                const participants = Array.from(voiceParticipants.values()).filter(p => p.channelId === c.id);
+                participants.forEach(p => {
+                    const pDiv = document.createElement('div');
+                    pDiv.className = "flex items-center px-8 py-1 mb-[1px] hover:bg-[#3f4147] rounded cursor-pointer group";
+                    pDiv.innerHTML = `<img src="${p.avatar}" class="w-6 h-6 rounded-full mr-2 voice-avatar-speaking"><span class="text-sm font-medium text-[#949ba4] group-hover:text-[#dbdee1]">${p.username}</span>`;
+                    list.appendChild(pDiv);
+                });
+            });
+        }
+
+        function renderMemberList() {
+            const container = document.getElementById('member-list'); container.innerHTML = '';
+            // Only add online members, but fallback to currentUser if empty
+            if(onlineMembers.size === 0 && currentUser) onlineMembers.set(currentUser.uid, { username: currentUser.displayName, avatar: currentUser.photoURL, uid: currentUser.uid });
+            document.getElementById('member-count').textContent = onlineMembers.size;
+            onlineMembers.forEach((user) => {
+                const isOwner = activeServerOwnerId === user.uid; const isTyping = typingUsers.has(user.uid);
+                const div = document.createElement('div'); div.className = "flex items-center px-2 py-1.5 hover:bg-[#35373c] rounded cursor-pointer mb-2"; div.onclick = (e) => showUserPopup(e, user);
+                div.innerHTML = `<div class="relative mr-3"><img src="${user.avatar}" class="w-8 h-8 rounded-full bg-gray-600 ${isTyping ? 'voice-avatar-active':''}"><div class="absolute bottom-0 right-0 w-3 h-3 bg-[#23a559] rounded-full border-[2px] border-[#2b2d31]"></div></div><div><div class="font-medium flex items-center ${user.uid === currentUser?.uid ? 'text-[#23a559]' : 'text-[#dbdee1]'}">${user.username}${isOwner ? '<i class="fa-solid fa-crown text-yellow-500 text-xs ml-1.5"></i>' : ''}</div><div class="text-xs ${isTyping ? 'text-white font-bold animate-pulse' : 'text-[#949ba4]'}">${isTyping ? 'Typing...' : 'Online'}</div></div>`;
+                container.appendChild(div);
+            });
+        }
+
+        window.switchServer = (id) => {
+            isHome = false; activeServerId = id; const s = servers.find(x => x.id === id); activeServerOwnerId = s ? s.ownerId : null;
+            renderServerList();
+            document.getElementById('sidebar-header').textContent = s ? s.name : "Server";
+            document.getElementById('header-icon').className = "fa-solid fa-chevron-down text-xs";
+            const qChannels = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'channels'), where('serverId', '==', id));
+            onSnapshot(qChannels, (snapshot) => {
+                channels = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
+                renderChannelList();
+                if (channels.length > 0 && !activeChannelId) switchChannel(channels[0].id, channels[0].name);
+            });
+        }
+
+        window.switchToHome = () => {
+            isHome = true; activeServerId = null; activeServerOwnerId = null; renderServerList();
+            document.getElementById('sidebar-header').textContent = "Direct Messages"; document.getElementById('header-icon').className = "hidden";
+            renderChannelList();
+            if (openDMs.length > 0) switchChannel(openDMs[0].id, openDMs[0].name, true);
+            else {
+                activeChannelId = null; document.getElementById('channel-header').textContent = "Craic Bot";
+                document.getElementById('messages-container').innerHTML = `<div class="mt-auto flex flex-col items-center justify-center h-full text-center p-6"><i class="fa-solid fa-comments text-6xl text-[#23a559] mb-4"></i><h1 class="text-2xl font-bold text-white mb-2">No Active Conversations</h1><p class="text-[#B5BAC1]">Chat is better with friends!</p></div>`;
+            }
+            toggleMobileMenu(false);
+        }
+
+        window.switchChannel = (id, name, isDM = false) => {
+            activeChannelId = id; lastMsgDate = null; document.getElementById('channel-header').textContent = name;
+            document.getElementById('channel-topic').textContent = isDM ? "Direct Message" : "Encrypted Connection";
+            document.getElementById('message-input').placeholder = `Message ${isDM ? '@' : '#'}${name}`;
+            document.getElementById('message-input').disabled = false; document.getElementById('chat-icon').innerHTML = isDM ? '<i class="fa-solid fa-at"></i>' : '<i class="fa-solid fa-hashtag"></i>';
+            channelMembers.clear(); renderChannelList(); loadMessages(); listenToTyping();
+        };
+
+        // --- HELPERS ---
+        window.openCreateServerModal = () => {
+            openGenericModal("Create Server", "Give your new community a personality with a name.", "Server Name", async (name) => {
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'servers'), { name: name, acronym: name.substring(0,2).toUpperCase(), ownerId: currentUser.uid });
+            });
+        }
+
+        window.openJoinServerModal = () => {
+            openGenericModal("Join Server", "Enter an Invite ID below to join an existing server.", "Server ID", (id) => {
+                switchServer(id);
+            });
+        }
+
+        window.promptCreateChannel = (type = 'text') => {
+            openGenericModal("Create Channel", `Creating a new ${type} channel.`, "Channel Name", async (name) => {
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'channels'), { 
+                    name: name.toLowerCase().replace(/\s/g, '-'), type: type, serverId: activeServerId 
+                });
+            });
+        }
+        window.deleteChannel = async (id) => { openGenericModal("Delete Channel", "Are you sure?", "", async () => { await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'channels', id)); }, true); }
+        window.copyServerInvite = () => { if(!activeServerId || isHome) return; const inviteLink = window.location.origin + window.location.pathname + '?join=' + activeServerId; navigator.clipboard.writeText(inviteLink); alert("Invite Copied!"); };
+        function updateUserUI() { if(!currentUser) return; document.getElementById('user-name').textContent = currentUser.displayName; document.getElementById('user-avatar').src = currentUser.photoURL; }
+
+        let unsubscribeMsg = null;
+        function loadMessages() {
+            if (!activeChannelId) return;
+            const container = document.getElementById('messages-container'); container.innerHTML = '<div class="mt-auto"></div>'; 
+            lastMsgDate = null; if (unsubscribeMsg) unsubscribeMsg();
+            const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'messages'), where('channelId', '==', activeChannelId), orderBy('timestamp', 'asc'));
+            unsubscribeMsg = onSnapshot(q, (snapshot) => { 
+                snapshot.docChanges().forEach((change) => { 
+                    if (change.type === "added") { 
+                        appendMessage(change.doc.data(), change.doc.id); 
+                        if(change.doc.data().userId !== currentUser.uid && (Date.now() - change.doc.data().timestamp) < 1000) sndMsg.play().catch(e => {}); 
+                    } 
+                    if (change.type === "removed") removeMessageElement(change.doc.id);
+                    if (change.type === "modified") updateMessageElement(change.doc.data(), change.doc.id); 
+                }); 
+            }, (error) => { if(error.code === 'failed-precondition') { const qFallback = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'messages'), where('channelId', '==', activeChannelId)); onSnapshot(qFallback, (snap) => { let msgs = []; snap.forEach(d => msgs.push({ ...d.data(), id: d.id })); msgs.sort((a,b) => a.timestamp - b.timestamp); container.innerHTML = '<div class="mt-auto"></div>'; lastMsgDate = null; msgs.forEach(m => appendMessage(m, m.id)); }); } });
+        }
+
+        function appendMessage(msg, docId) {
+            const container = document.getElementById('messages-container');
+            const dateStr = new Date(msg.timestamp).toLocaleDateString();
+            if(lastMsgDate !== dateStr) { const div = document.createElement('div'); div.className = "date-divider"; div.innerHTML = `<span>${dateStr}</span>`; container.appendChild(div); lastMsgDate = dateStr; }
+            const div = document.createElement('div'); div.id = `msg-${docId}`; div.className = "group flex pl-4 pr-4 py-1 hover:bg-[#2e3035] -mx-4 mt-0.5 relative";
+            const isMe = msg.userId === currentUser.uid; const canDelete = isMe || (activeServerOwnerId === currentUser.uid);
+            const escapedContent = msg.content ? msg.content.replace(/\\/g, "\\\\").replace(/'/g, "\\'") : "";
+            let deleteBtn = canDelete ? `<div class="message-actions absolute -top-2 right-4 bg-[#313338] border border-[#2b2d31] rounded shadow-sm flex items-center p-1 z-10"><button onclick="promptDeleteMessage('${docId}')" class="p-1 hover:bg-[#ed4245] hover:text-white text-[#b5bac1] rounded transition-colors"><i class="fa-solid fa-trash-can"></i></button></div>` : '';
+            if(isMe && !msg.audioUrl) deleteBtn = `<div class="message-actions absolute -top-2 right-4 bg-[#313338] border border-[#2b2d31] rounded shadow-sm flex items-center p-1 z-10"><button onclick="editMessage('${docId}', '${escapedContent}')" class="p-1 hover:bg-[#2b2d31] hover:text-white text-[#b5bac1] rounded transition-colors mr-1"><i class="fa-solid fa-pencil"></i></button><button onclick="promptDeleteMessage('${docId}')" class="p-1 hover:bg-[#ed4245] hover:text-white text-[#b5bac1] rounded transition-colors"><i class="fa-solid fa-trash-can"></i></button></div>`;
+            let richContent = parseMarkdown(msg.content);
+            const urlMatch = msg.content.match(/(https?:\/\/[^\s]+)/g); let embedHTML = '';
+            if(msg.audioUrl) embedHTML = `<div class="mt-2 flex items-center bg-[#2b2d31] p-2 rounded-lg max-w-sm"><button class="text-[#23a559] mr-2" onclick="this.nextElementSibling.play()"><i class="fa-solid fa-play"></i></button><audio src="${msg.audioUrl}" controls class="w-64 h-8"></audio></div>`;
+            else if(urlMatch) { urlMatch.forEach(url => { const cleanUrl = url.split('?')[0]; if(cleanUrl.match(/\.(jpeg|jpg|gif|png|webp)$/i) || url.includes('firebasestorage')) { embedHTML += `<div class="mt-2"><img src="${url}" class="rounded-lg max-h-64 max-w-full border border-[#1e1f22]" loading="lazy"></div>`; } else if(url.includes('youtube.com/watch') || url.includes('youtu.be/')) { let vId = url.split('v=')[1]; if(!vId && url.includes('youtu.be/')) vId = url.split('youtu.be/')[1]; if(vId) { vId = vId.split('&')[0]; embedHTML += `<div class="mt-2"><iframe width="100%" height="250" style="max-width: 400px;" src="https://www.youtube.com/embed/${vId}" frameborder="0" allowfullscreen class="rounded-lg border border-[#1e1f22]"></iframe></div>`; } } }); }
+            div.innerHTML = `${deleteBtn}<img src="${msg.avatar}" class="w-10 h-10 rounded-full mr-4 mt-0.5 cursor-pointer hover:opacity-80 transition-opacity" onclick="showUserPopup(event, {uid:'${msg.userId}', username:'${msg.username}', avatar:'${msg.avatar}'})"><div class="flex-1 min-w-0"><div class="flex items-center mb-0.5"><span class="font-medium mr-2 text-white cursor-pointer hover:underline" onclick="showUserPopup(event, {uid:'${msg.userId}', username:'${msg.username}', avatar:'${msg.avatar}'})">${msg.username}</span><span class="text-xs text-[#949ba4] font-medium ml-0.5">${new Date(msg.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>${msg.edited ? '<span class="text-[10px] text-[#949ba4] ml-1">(edited)</span>' : ''}</div><div class="msg-content text-[#dbdee1] whitespace-pre-wrap leading-[1.375rem] font-light">${richContent}</div>${embedHTML}<div id="reactions-${docId}">${renderReactions(msg, docId)}</div></div>`;
+            container.appendChild(div); if(container.scrollHeight - container.scrollTop <= container.clientHeight + 200) container.scrollTop = container.scrollHeight;
+        }
+
+        function updateMessageElement(msg, docId) { const el = document.getElementById(`msg-${docId}`); if(el) { const contentEl = el.querySelector('.msg-content'); if(contentEl && contentEl.textContent !== msg.content) { el.remove(); appendMessage(msg, docId); } else { const reactionEl = document.getElementById(`reactions-${docId}`); if(reactionEl) reactionEl.innerHTML = renderReactions(msg, docId); } } }
+        window.renderServerList = renderServerList; window.renderMemberList = renderMemberList;
+        window.parseMarkdown = (text) => text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*(.*?)\*/g,'<em>$1</em>').replace(/```(.*?)```/gs,'<pre class="md-pre"><code>$1</code></pre>').replace(/`(.*?)`/g,'<code class="md-code">$1</code>');
+        window.promptDeleteMessage = (docId) => openGenericModal("Delete Message", "Confirm deletion?", "", async () => await deleteDoc(doc(db,'artifacts',APP_ID,'public','data','messages',docId)), true);
+        window.toggleMobileMenu = (force) => { const s = document.getElementById('sidebar-container'); const o = document.getElementById('mobile-overlay'); if(force !== undefined) { if(force) { s.classList.add('mobile-open'); o.classList.remove('hidden'); } else { s.classList.remove('mobile-open'); o.classList.add('hidden'); } } else { s.classList.toggle('mobile-open'); o.classList.toggle('hidden'); } }
+        window.showUserPopup = (e,u) => { if(u.uid === currentUser.uid) return; selectedUserForDM = u; const p = document.getElementById('user-popup'); document.getElementById('popup-username').textContent = u.username; document.getElementById('popup-avatar').src = u.avatar; const r = e.currentTarget.getBoundingClientRect(); p.style.top = Math.min(r.top, window.innerHeight-300)+'px'; p.style.left = Math.min((r.left-310), window.innerWidth-320)+'px'; p.classList.remove('hidden'); }
+        window.startDM = () => { if(!selectedUserForDM) return; const t = selectedUserForDM; const ids = [currentUser.uid, t.uid].sort(); const dmId = `dm_${ids[0]}_${ids[1]}`; if(!openDMs.find(d=>d.id===dmId)) { openDMs.unshift({id:dmId, name:t.username, avatar:t.avatar}); localStorage.setItem('echo_dms', JSON.stringify(openDMs)); } switchToHome(); switchChannel(dmId, t.username, true); }
+        window.removeDM = (id) => { openDMs = openDMs.filter(d=>d.id!==id); localStorage.setItem('echo_dms', JSON.stringify(openDMs)); renderChannelList(); if(activeChannelId === id) switchToHome(); }
+        let typingUsers = new Set(); let unsubscribeTyping = null;
+        function listenToTyping() { if(!activeChannelId) return; if(unsubscribeTyping) unsubscribeTyping(); const q = query(collection(db,'artifacts',APP_ID,'public','data','typing'), where('channelId','==',activeChannelId)); unsubscribeTyping = onSnapshot(q,(s)=>{ const now = Date.now(); const activeTypers = []; typingUsers.clear(); s.forEach(d=>{ const data = d.data(); if(data.userId !== currentUser.uid && (now - data.timestamp) < 3000){ activeTypers.push(data.username); typingUsers.add(data.userId); }}); const i = document.getElementById('typing-indicator'); const t = document.getElementById('typing-names'); if(activeTypers.length > 0){ i.classList.remove('opacity-0'); if(activeTypers.length === 1) t.textContent = `${activeTypers[0]} is typing...`; else t.textContent = "Several people are typing..."; } else { i.classList.add('opacity-0'); }}); }
+        async function sendTyping() { if(!activeChannelId) return; await setDoc(doc(db,'artifacts',APP_ID,'public','data','typing',currentUser.uid), { userId: currentUser.uid, username: currentUser.displayName, channelId: activeChannelId, timestamp: Date.now() }); }
+        window.openSettings = () => { document.getElementById('settings-username').value = currentUser.displayName; document.getElementById('settings-avatar-url').value = currentUser.photoURL; document.getElementById('settings-avatar-preview').src = currentUser.photoURL; document.getElementById('settings-modal').classList.remove('hidden'); setTimeout(()=>document.getElementById('settings-modal').classList.remove('opacity-0'), 10); }
+        window.closeSettings = () => { document.getElementById('settings-modal').classList.add('opacity-0'); setTimeout(()=>document.getElementById('settings-modal').classList.add('hidden'), 200); }
+        window.saveSettings = async () => { const name = document.getElementById('settings-username').value; const avatar = document.getElementById('settings-avatar-url').value; if(name) { await updateProfile(currentUser, { displayName: name, photoURL: avatar }); localStorage.setItem('vc_username', name); updateUserUI(); closeSettings(); } }
+        const msgInput = document.getElementById('message-input');
+        msgInput.addEventListener('keydown', async (e) => { sendTyping(); if (e.key === 'Enter' && e.target.value.trim() !== '') { const text = e.target.value; e.target.value = ''; await addDoc(collection(db,'artifacts',APP_ID,'public','data','messages'), { content: text, timestamp: Date.now(), channelId: activeChannelId, userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL }); } });
+    </script>
+</body>
+</html>
