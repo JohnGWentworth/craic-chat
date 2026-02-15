@@ -59,7 +59,7 @@
     <audio id="sound-voice-leave" src="https://assets.mixkit.co/active_storage/sfx/2359/2359-preview.mp3"></audio>
     <input type="file" id="file-upload" class="hidden" accept="image/*">
     
-    <!-- Voice Elements container (Not display:none, just offscreen) -->
+    <!-- Voice Elements container -->
     <div id="voice-streams"></div>
 
     <!-- GENERIC INPUT MODAL -->
@@ -245,7 +245,12 @@
         let peerConnections = {}; 
         let voiceMuted = false;
         let voiceDeafened = false;
+        // Public STUN server required for peers to find each other
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        
+        // ICE Candidate Queue: Holds candidates until remote description is set
+        const candidateQueues = {};
+
         let onlineMembers = new Map();
         let audioContext = null;
         let analyser = null;
@@ -318,6 +323,7 @@
                     if(Date.now() - data.lastSeen < 1800000) voiceParticipants.set(data.userId, data);
                 });
                 renderChannelList(); 
+                updateVoiceVisuals();
             });
         }
 
@@ -328,8 +334,10 @@
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 localStream.getAudioTracks()[0].enabled = !voiceMuted;
                 
-                // Local Analyzer
+                // Ensure AudioContext is ready (user interaction triggered this fn, so we can resume)
                 if(!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if(audioContext.state === 'suspended') await audioContext.resume();
+
                 analyser = audioContext.createAnalyser();
                 microphone = audioContext.createMediaStreamSource(localStream);
                 microphone.connect(analyser);
@@ -351,7 +359,7 @@
                 // Start Visualizer Loop
                 speakingInterval = requestAnimationFrame(checkSpeakingVolume);
 
-            } catch(e) { console.error("Mic Error:", e); alert("Cannot access microphone."); }
+            } catch(e) { console.error("Mic Error:", e); alert("Cannot access microphone. Ensure site permissions are allowed."); }
         }
 
         function setupRemoteVisualizer(stream, userId) {
@@ -360,7 +368,6 @@
             const remoteAnalyser = audioContext.createAnalyser();
             remoteAnalyser.fftSize = 512;
             source.connect(remoteAnalyser);
-            // We don't connect to destination here because the <audio> tag handles output
             remoteAnalysers[userId] = remoteAnalyser;
         }
 
@@ -408,8 +415,8 @@
             sndVLeave.play().catch(()=>{});
             
             if(speakingInterval) cancelAnimationFrame(speakingInterval);
-            if(audioContext) audioContext.close();
-            audioContext = null;
+            // Don't close AudioContext, just disconnect streams to keep context alive for re-joins
+            // if(audioContext) audioContext.close(); 
             remoteAnalysers = {};
             
             Object.values(peerConnections).forEach(pc => pc.close());
@@ -459,11 +466,15 @@
         }
 
         async function connectToPeer(targetUserId, initiator = false) {
+            console.log("Connecting to peer:", targetUserId, "Initiator:", initiator);
             const pc = new RTCPeerConnection(config);
             peerConnections[targetUserId] = pc;
+            candidateQueues[targetUserId] = []; // Init queue
+
             if(localStream) localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
             
             pc.ontrack = (event) => {
+                console.log("Received remote track from:", targetUserId);
                 let audio = document.getElementById(`audio-${targetUserId}`);
                 if(!audio) {
                     audio = document.createElement('audio'); 
@@ -489,29 +500,49 @@
 
         async function handleSignal(data, sigId) {
             if(!peerConnections[data.from] && data.type !== 'offer') return; 
+            
             let pc = peerConnections[data.from];
             
-            // Queue for ICE candidates if remote desc not set
-            if(!pc && data.type === 'offer') {
-                await connectToPeer(data.from, false);
-                pc = peerConnections[data.from];
-            }
-
             if(data.type === 'offer') {
+                if(!pc) { await connectToPeer(data.from, false); pc = peerConnections[data.from]; }
                 await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
                 sendSignal(data.from, { type: 'answer', sdp: answer });
+                // Process queued candidates
+                processCandidateQueue(data.from);
             } else if(data.type === 'answer') { 
                 await pc.setRemoteDescription(new RTCSessionDescription(data.sdp)); 
+                processCandidateQueue(data.from);
             } else if(data.type === 'ice') { 
-                if(pc.remoteDescription) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-                // Note: Production app should queue these if remoteDescription is null
+                if(pc.remoteDescription) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                } else {
+                    // Queue candidate if remote description not yet set
+                    if(!candidateQueues[data.from]) candidateQueues[data.from] = [];
+                    candidateQueues[data.from].push(data.candidate);
+                }
+            }
+        }
+
+        async function processCandidateQueue(userId) {
+            const pc = peerConnections[userId];
+            const queue = candidateQueues[userId];
+            if(pc && queue && queue.length > 0) {
+                console.log("Processing queued candidates for", userId, queue.length);
+                while(queue.length > 0) {
+                    const candidate = queue.shift();
+                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                }
             }
         }
 
         async function sendSignal(targetId, payload) {
             await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals'), { to: targetId, from: currentUser.uid, ...payload, timestamp: Date.now() });
+        }
+
+        function updateVoiceVisuals() {
+            // Helper to refresh visual state of participants
         }
 
         // --- GLOBAL UI & HELPERS ---
