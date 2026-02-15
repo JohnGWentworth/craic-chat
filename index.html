@@ -41,8 +41,6 @@
         .date-divider { display: flex; align-items: center; justify-content: center; margin: 24px 0; position: relative; }
         .date-divider::before { content: ""; height: 1px; background: #3f4147; position: absolute; left: 0; right: 0; z-index: 0; }
         .date-divider span { background: #313338; padding: 0 8px; color: #949ba4; font-size: 12px; font-weight: 600; z-index: 1; }
-        
-        /* Voice Active Glow */
         .voice-avatar-speaking { box-shadow: 0 0 0 2px #23a559; border-color: transparent !important; }
         .voice-connected-bar { background-color: #232428; border-top: 1px solid #1f2023; padding: 8px 10px; }
     </style>
@@ -54,10 +52,8 @@
     <audio id="sound-voice-leave" src="https://assets.mixkit.co/active_storage/sfx/2359/2359-preview.mp3"></audio>
     <input type="file" id="file-upload" class="hidden" accept="image/*">
     
-    <!-- Hidden Voice Elements -->
     <div id="voice-streams" class="hidden"></div>
 
-    <!-- GENERIC INPUT MODAL -->
     <div id="generic-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-200">
         <div class="bg-[#313338] w-full max-w-sm rounded-lg shadow-2xl p-6 transform scale-95 transition-transform duration-200" id="generic-modal-content">
             <h3 id="modal-title" class="text-xl font-bold text-white mb-4">Title</h3>
@@ -70,7 +66,6 @@
         </div>
     </div>
 
-    <!-- USER POPUP -->
     <div id="user-popup" class="fixed z-50 hidden" style="width: 300px;">
         <div class="bg-[#232428] rounded-lg shadow-2xl overflow-hidden border border-[#1e1f22]">
             <div class="h-16 bg-[#23a559]"></div>
@@ -86,7 +81,6 @@
         <div class="fixed inset-0 -z-10" onclick="document.getElementById('user-popup').classList.add('hidden')"></div>
     </div>
 
-    <!-- SETTINGS MODAL -->
     <div id="settings-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-200">
         <div class="bg-[#313338] w-full max-w-md rounded-lg shadow-2xl transform scale-95 transition-transform duration-200 m-4" id="settings-content">
             <div class="p-6">
@@ -136,7 +130,6 @@
             </header>
             <div class="flex-1 overflow-y-auto pt-3 px-2 space-y-1" id="channel-list"></div>
             
-            <!-- VOICE CONNECTED BAR -->
             <div id="voice-connected-bar" class="hidden voice-connected-bar flex flex-col">
                 <div class="flex items-center justify-between mb-1">
                     <div class="flex flex-col">
@@ -203,16 +196,14 @@
             firebaseConfig = JSON.parse(__firebase_config);
             APP_ID = typeof __app_id !== 'undefined' ? __app_id : "vanish-chat-public-v1";
         } else {
-            const firebaseConfig = {
-  apiKey: "AIzaSyCNE-cWIo2Ofr0spW1czbtJMSXs2mcaVpY",
-  authDomain: "craic-chat-50d71.firebaseapp.com",
-  projectId: "craic-chat-50d71",
-  storageBucket: "craic-chat-50d71.firebasestorage.app",
-  messagingSenderId: "1054605077942",
-  appId: "1:1054605077942:web:e44b8aa557c60e085ca517",
-  measurementId: "G-50T5S1NKR4"
-};
-
+            firebaseConfig = {
+                apiKey: "PASTE_API_KEY",
+                authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
+                projectId: "PASTE_PROJECT_ID",
+                storageBucket: "PASTE_PROJECT_ID.appspot.com",
+                messagingSenderId: "PASTE_SENDER_ID",
+                appId: "PASTE_APP_ID"
+            };
             APP_ID = "vanish-chat-public-v1";
         }
 
@@ -238,15 +229,11 @@
         
         let currentVoiceChannelId = null;
         let voiceParticipants = new Map(); 
-        
-        // WebRTC Globals
         let localStream = null;
-        let peerConnections = {}; // Map: userId -> RTCPeerConnection
+        let peerConnections = {}; 
         let voiceMuted = false;
         let voiceDeafened = false;
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-        // Realtime Online Status
         let onlineMembers = new Map();
 
         const sndMsg = document.getElementById('sound-msg');
@@ -269,7 +256,7 @@
                 initDataListeners();
                 initVoiceStates(); 
                 initPresenceHeartbeat();
-                initVoiceSignaling(); // Listen for calls
+                initVoiceSignaling();
                 
                 const urlParams = new URLSearchParams(window.location.search);
                 const joinId = urlParams.get('join');
@@ -280,7 +267,6 @@
             }
         });
 
-        // --- PRESENCE & HEARTBEAT ---
         function initPresenceHeartbeat() {
             const reportPresence = async () => {
                 if(!currentUser) return;
@@ -304,7 +290,6 @@
             });
         }
 
-        // --- VOICE: UI & STATE ---
         function initVoiceStates() {
             const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states'));
             onSnapshot(q, (snapshot) => {
@@ -314,83 +299,65 @@
                     if(Date.now() - data.lastSeen < 1800000) voiceParticipants.set(data.userId, data);
                 });
                 renderChannelList(); 
-                // Auto-connect flow for mesh? (New joiners call existing)
             });
         }
 
-        window.joinVoice = async (channelId, channelName) => {
+        function joinVoice(channelId, channelName) {
             if(currentVoiceChannelId === channelId) return;
-            if(currentVoiceChannelId) await disconnectVoice();
-            
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            if(currentVoiceChannelId) disconnectVoice();
+            navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
+                localStream = stream;
                 localStream.getAudioTracks()[0].enabled = !voiceMuted;
-            } catch(e) { 
-                console.error("Mic Error:", e); 
-                alert("Cannot access microphone. Please allow permissions.");
-                return;
-            }
+                currentVoiceChannelId = channelId;
+                sndVJoin.play().catch(()=>{});
+                document.getElementById('voice-connected-bar').classList.remove('hidden');
+                document.getElementById('voice-channel-name').textContent = channelName;
+                setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states', currentUser.uid), { 
+                    userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL, 
+                    channelId: channelId, serverId: activeServerId, lastSeen: Date.now() 
+                });
+                const participants = Array.from(voiceParticipants.values()).filter(p => p.channelId === channelId && p.userId !== currentUser.uid);
+                participants.forEach(p => connectToPeer(p.userId, true));
+            }).catch(e => { console.error("Mic Error:", e); alert("Cannot access microphone."); });
+        }
 
-            currentVoiceChannelId = channelId;
-            sndVJoin.play().catch(()=>{});
-            document.getElementById('voice-connected-bar').classList.remove('hidden');
-            document.getElementById('voice-channel-name').textContent = channelName;
-            
-            // Set Presence
-            await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states', currentUser.uid), { 
-                userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL, 
-                channelId: channelId, serverId: activeServerId, lastSeen: Date.now() 
-            });
-
-            // Call everyone currently in this channel
-            const participants = Array.from(voiceParticipants.values()).filter(p => p.channelId === channelId && p.userId !== currentUser.uid);
-            participants.forEach(p => connectToPeer(p.userId, true));
-        };
-
-        window.disconnectVoice = async () => {
+        async function disconnectVoice() {
             if(!currentVoiceChannelId) return;
             sndVLeave.play().catch(()=>{});
-            
-            // Close all connections
             Object.values(peerConnections).forEach(pc => pc.close());
             peerConnections = {};
             if(localStream) localStream.getTracks().forEach(track => track.stop());
             localStream = null;
-
             document.getElementById('voice-connected-bar').classList.add('hidden');
-            document.getElementById('voice-streams').innerHTML = ''; // Clear remote audios
-            
+            document.getElementById('voice-streams').innerHTML = '';
             await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states', currentUser.uid));
             currentVoiceChannelId = null;
-        };
+        }
 
-        window.toggleVoiceMute = () => {
+        function toggleVoiceMute() {
             voiceMuted = !voiceMuted;
             if(localStream) localStream.getAudioTracks()[0].enabled = !voiceMuted;
             const btn = document.getElementById('btn-voice-mute');
             if(voiceMuted) { btn.innerHTML = '<i class="fa-solid fa-microphone-slash mr-1"></i> <span>Unmute</span>'; btn.classList.add('text-red-500'); }
             else { btn.innerHTML = '<i class="fa-solid fa-microphone mr-1"></i> <span>Mute</span>'; btn.classList.remove('text-red-500'); }
-        };
+        }
 
-        window.toggleVoiceDeafen = () => {
+        function toggleVoiceDeafen() {
             voiceDeafened = !voiceDeafened;
             const audios = document.querySelectorAll('#voice-streams audio');
             audios.forEach(a => a.muted = voiceDeafened);
             const btn = document.getElementById('btn-voice-deafen');
             if(voiceDeafened) { btn.innerHTML = '<i class="fa-solid fa-headphones mr-1"></i> <span>Undeafen</span>'; btn.classList.add('text-red-500'); }
             else { btn.innerHTML = '<i class="fa-solid fa-headphones mr-1"></i> <span>Deafen</span>'; btn.classList.remove('text-red-500'); }
-        };
+        }
 
-        // --- WEBRTC SIGNALING ---
         function initVoiceSignaling() {
-            // Listen for signals meant for ME
             const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals'), where('to', '==', currentUser.uid));
             onSnapshot(q, (snapshot) => {
                 snapshot.docChanges().forEach(async (change) => {
                     if(change.type === 'added') {
                         const data = change.doc.data();
                         await handleSignal(data, change.doc.id);
-                        // Delete signal after consuming to keep DB clean
                         deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals', change.doc.id));
                     }
                 });
@@ -400,30 +367,16 @@
         async function connectToPeer(targetUserId, initiator = false) {
             const pc = new RTCPeerConnection(config);
             peerConnections[targetUserId] = pc;
-
-            // Add local stream
             if(localStream) localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
-            // Handle remote stream
             pc.ontrack = (event) => {
                 let audio = document.getElementById(`audio-${targetUserId}`);
                 if(!audio) {
-                    audio = document.createElement('audio');
-                    audio.id = `audio-${targetUserId}`;
-                    audio.autoplay = true;
-                    audio.muted = voiceDeafened; // Check global deafen
+                    audio = document.createElement('audio'); audio.id = `audio-${targetUserId}`; audio.autoplay = true; audio.muted = voiceDeafened;
                     document.getElementById('voice-streams').appendChild(audio);
                 }
                 audio.srcObject = event.streams[0];
             };
-
-            // ICE Candidates
-            pc.onicecandidate = (event) => {
-                if(event.candidate) {
-                    sendSignal(targetUserId, { type: 'ice', candidate: event.candidate });
-                }
-            };
-
+            pc.onicecandidate = (event) => { if(event.candidate) sendSignal(targetUserId, { type: 'ice', candidate: event.candidate }); };
             if(initiator) {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
@@ -432,35 +385,23 @@
         }
 
         async function handleSignal(data, sigId) {
-            // Ensure we have a PC
-            if(!peerConnections[data.from] && data.type !== 'offer') return; // Should allow 'ice' if PC exists? Yes. 
-            
+            if(!peerConnections[data.from] && data.type !== 'offer') return; 
             let pc = peerConnections[data.from];
-            
             if(data.type === 'offer') {
-                if(!pc) {
-                    await connectToPeer(data.from, false);
-                    pc = peerConnections[data.from];
-                }
+                if(!pc) { await connectToPeer(data.from, false); pc = peerConnections[data.from]; }
                 await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
                 sendSignal(data.from, { type: 'answer', sdp: answer });
-            } else if(data.type === 'answer') {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-            } else if(data.type === 'ice') {
-                if(pc) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-            }
+            } else if(data.type === 'answer') { await pc.setRemoteDescription(new RTCSessionDescription(data.sdp)); } 
+            else if(data.type === 'ice') { if(pc) await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); }
         }
 
         async function sendSignal(targetId, payload) {
-            await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals'), {
-                to: targetId, from: currentUser.uid, ...payload, timestamp: Date.now()
-            });
+            await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals'), { to: targetId, from: currentUser.uid, ...payload, timestamp: Date.now() });
         }
 
-        // --- EXISTING LOGIC BELOW (With Voice Integrations) ---
-        window.openGenericModal = (title, desc, placeholder, onConfirm, isConfirmOnly = false) => {
+        function openGenericModal(title, desc, placeholder, onConfirm, isConfirmOnly = false) {
             const modal = document.getElementById('generic-modal');
             const content = document.getElementById('generic-modal-content');
             document.getElementById('modal-title').textContent = title;
@@ -476,7 +417,27 @@
             modal.classList.remove('hidden');
             setTimeout(() => { modal.classList.remove('opacity-0'); content.classList.remove('scale-95'); content.classList.add('scale-100'); }, 10);
         }
-        window.closeGenericModal = () => { const modal = document.getElementById('generic-modal'); const content = document.getElementById('generic-modal-content'); modal.classList.add('opacity-0'); content.classList.add('scale-95'); content.classList.remove('scale-100'); setTimeout(() => modal.classList.add('hidden'), 200); }
+        function closeGenericModal() { const modal = document.getElementById('generic-modal'); const content = document.getElementById('generic-modal-content'); modal.classList.add('opacity-0'); content.classList.add('scale-95'); content.classList.remove('scale-100'); setTimeout(() => modal.classList.add('hidden'), 200); }
+
+        function openCreateServerModal() {
+            openGenericModal("Create Server", "Give your new community a personality with a name.", "Server Name", async (name) => {
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'servers'), { name: name, acronym: name.substring(0,2).toUpperCase(), ownerId: currentUser.uid });
+            });
+        }
+
+        function openJoinServerModal() {
+            openGenericModal("Join Server", "Enter an Invite ID below to join an existing server.", "Server ID", (id) => { switchServer(id); });
+        }
+
+        function promptCreateChannel(type = 'text') {
+            openGenericModal("Create Channel", `Creating a new ${type} channel.`, "Channel Name", async (name) => {
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'channels'), { name: name.toLowerCase().replace(/\s/g, '-'), type: type, serverId: activeServerId });
+            });
+        }
+        
+        async function deleteChannel(id) { openGenericModal("Delete Channel", "Are you sure?", "", async () => { await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'channels', id)); }, true); }
+        function copyServerInvite() { if(!activeServerId || isHome) return; const inviteLink = window.location.origin + window.location.pathname + '?join=' + activeServerId; navigator.clipboard.writeText(inviteLink); alert("Invite Copied!"); };
+        function updateUserUI() { if(!currentUser) return; document.getElementById('user-name').textContent = currentUser.displayName; document.getElementById('user-avatar').src = currentUser.photoURL; }
 
         function initDataListeners() {
             const qServers = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'servers'));
@@ -505,7 +466,7 @@
             finally { document.getElementById('upload-spinner').classList.add('hidden'); e.target.value = ''; }
         });
 
-        window.toggleRecording = async () => {
+        async function toggleRecording() {
             const micBtn = document.getElementById('mic-btn');
             const inputContainer = document.getElementById('input-container');
             const input = document.getElementById('message-input');
@@ -533,9 +494,9 @@
                 input.placeholder = `Message ${activeChannelId ? '#' : '@'}...`;
                 input.disabled = false;
             }
-        };
+        }
 
-        const uploadAudio = async () => {
+        async function uploadAudio() {
             if(!storage) return alert("Storage not configured");
             const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
             const spinner = document.getElementById('upload-spinner');
@@ -548,9 +509,9 @@
                     content: "🎤 Voice Message", audioUrl: url, timestamp: Date.now(), channelId: activeChannelId, userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL 
                 });
             } catch (err) { console.error(err); } finally { spinner.classList.add('hidden'); }
-        };
+        }
 
-        window.editMessage = (docId, oldContent) => {
+        function editMessage(docId, oldContent) {
             const contentDiv = document.querySelector(`#msg-${docId} .msg-content`);
             if(!contentDiv) return;
             const currentHtml = contentDiv.innerHTML;
@@ -558,13 +519,13 @@
             const input = contentDiv.querySelector('input');
             input.focus();
             input.onkeydown = (e) => { if(e.key === 'Escape') contentDiv.innerHTML = currentHtml; };
-        };
+        }
 
-        window.submitEdit = async (e, docId) => {
+        async function submitEdit(e, docId) {
             e.preventDefault();
             const newContent = e.target.elements.editInput.value;
             if(newContent.trim()) { await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'messages', docId), { content: newContent, edited: true }); }
-        };
+        }
 
         function renderServerList() {
             const container = document.getElementById('dynamic-servers'); container.innerHTML = '';
@@ -626,20 +587,7 @@
             });
         }
 
-        function renderMemberList() {
-            const container = document.getElementById('member-list'); container.innerHTML = '';
-            // Only add online members, but fallback to currentUser if empty
-            if(onlineMembers.size === 0 && currentUser) onlineMembers.set(currentUser.uid, { username: currentUser.displayName, avatar: currentUser.photoURL, uid: currentUser.uid });
-            document.getElementById('member-count').textContent = onlineMembers.size;
-            onlineMembers.forEach((user) => {
-                const isOwner = activeServerOwnerId === user.uid; const isTyping = typingUsers.has(user.uid);
-                const div = document.createElement('div'); div.className = "flex items-center px-2 py-1.5 hover:bg-[#35373c] rounded cursor-pointer mb-2"; div.onclick = (e) => showUserPopup(e, user);
-                div.innerHTML = `<div class="relative mr-3"><img src="${user.avatar}" class="w-8 h-8 rounded-full bg-gray-600 ${isTyping ? 'voice-avatar-active':''}"><div class="absolute bottom-0 right-0 w-3 h-3 bg-[#23a559] rounded-full border-[2px] border-[#2b2d31]"></div></div><div><div class="font-medium flex items-center ${user.uid === currentUser?.uid ? 'text-[#23a559]' : 'text-[#dbdee1]'}">${user.username}${isOwner ? '<i class="fa-solid fa-crown text-yellow-500 text-xs ml-1.5"></i>' : ''}</div><div class="text-xs ${isTyping ? 'text-white font-bold animate-pulse' : 'text-[#949ba4]'}">${isTyping ? 'Typing...' : 'Online'}</div></div>`;
-                container.appendChild(div);
-            });
-        }
-
-        window.switchServer = (id) => {
+        function switchServer(id) {
             isHome = false; activeServerId = id; const s = servers.find(x => x.id === id); activeServerOwnerId = s ? s.ownerId : null;
             renderServerList();
             document.getElementById('sidebar-header').textContent = s ? s.name : "Server";
@@ -652,7 +600,7 @@
             });
         }
 
-        window.switchToHome = () => {
+        function switchToHome() {
             isHome = true; activeServerId = null; activeServerOwnerId = null; renderServerList();
             document.getElementById('sidebar-header').textContent = "Direct Messages"; document.getElementById('header-icon').className = "hidden";
             renderChannelList();
@@ -664,37 +612,13 @@
             toggleMobileMenu(false);
         }
 
-        window.switchChannel = (id, name, isDM = false) => {
+        function switchChannel(id, name, isDM = false) {
             activeChannelId = id; lastMsgDate = null; document.getElementById('channel-header').textContent = name;
             document.getElementById('channel-topic').textContent = isDM ? "Direct Message" : "Encrypted Connection";
             document.getElementById('message-input').placeholder = `Message ${isDM ? '@' : '#'}${name}`;
             document.getElementById('message-input').disabled = false; document.getElementById('chat-icon').innerHTML = isDM ? '<i class="fa-solid fa-at"></i>' : '<i class="fa-solid fa-hashtag"></i>';
             channelMembers.clear(); renderChannelList(); loadMessages(); listenToTyping();
-        };
-
-        // --- HELPERS ---
-        window.openCreateServerModal = () => {
-            openGenericModal("Create Server", "Give your new community a personality with a name.", "Server Name", async (name) => {
-                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'servers'), { name: name, acronym: name.substring(0,2).toUpperCase(), ownerId: currentUser.uid });
-            });
         }
-
-        window.openJoinServerModal = () => {
-            openGenericModal("Join Server", "Enter an Invite ID below to join an existing server.", "Server ID", (id) => {
-                switchServer(id);
-            });
-        }
-
-        window.promptCreateChannel = (type = 'text') => {
-            openGenericModal("Create Channel", `Creating a new ${type} channel.`, "Channel Name", async (name) => {
-                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'channels'), { 
-                    name: name.toLowerCase().replace(/\s/g, '-'), type: type, serverId: activeServerId 
-                });
-            });
-        }
-        window.deleteChannel = async (id) => { openGenericModal("Delete Channel", "Are you sure?", "", async () => { await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'channels', id)); }, true); }
-        window.copyServerInvite = () => { if(!activeServerId || isHome) return; const inviteLink = window.location.origin + window.location.pathname + '?join=' + activeServerId; navigator.clipboard.writeText(inviteLink); alert("Invite Copied!"); };
-        function updateUserUI() { if(!currentUser) return; document.getElementById('user-name').textContent = currentUser.displayName; document.getElementById('user-avatar').src = currentUser.photoURL; }
 
         let unsubscribeMsg = null;
         function loadMessages() {
@@ -732,21 +656,59 @@
         }
 
         function updateMessageElement(msg, docId) { const el = document.getElementById(`msg-${docId}`); if(el) { const contentEl = el.querySelector('.msg-content'); if(contentEl && contentEl.textContent !== msg.content) { el.remove(); appendMessage(msg, docId); } else { const reactionEl = document.getElementById(`reactions-${docId}`); if(reactionEl) reactionEl.innerHTML = renderReactions(msg, docId); } } }
-        window.renderServerList = renderServerList; window.renderMemberList = renderMemberList;
-        window.parseMarkdown = (text) => text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*(.*?)\*/g,'<em>$1</em>').replace(/```(.*?)```/gs,'<pre class="md-pre"><code>$1</code></pre>').replace(/`(.*?)`/g,'<code class="md-code">$1</code>');
-        window.promptDeleteMessage = (docId) => openGenericModal("Delete Message", "Confirm deletion?", "", async () => await deleteDoc(doc(db,'artifacts',APP_ID,'public','data','messages',docId)), true);
-        window.toggleMobileMenu = (force) => { const s = document.getElementById('sidebar-container'); const o = document.getElementById('mobile-overlay'); if(force !== undefined) { if(force) { s.classList.add('mobile-open'); o.classList.remove('hidden'); } else { s.classList.remove('mobile-open'); o.classList.add('hidden'); } } else { s.classList.toggle('mobile-open'); o.classList.toggle('hidden'); } }
-        window.showUserPopup = (e,u) => { if(u.uid === currentUser.uid) return; selectedUserForDM = u; const p = document.getElementById('user-popup'); document.getElementById('popup-username').textContent = u.username; document.getElementById('popup-avatar').src = u.avatar; const r = e.currentTarget.getBoundingClientRect(); p.style.top = Math.min(r.top, window.innerHeight-300)+'px'; p.style.left = Math.min((r.left-310), window.innerWidth-320)+'px'; p.classList.remove('hidden'); }
-        window.startDM = () => { if(!selectedUserForDM) return; const t = selectedUserForDM; const ids = [currentUser.uid, t.uid].sort(); const dmId = `dm_${ids[0]}_${ids[1]}`; if(!openDMs.find(d=>d.id===dmId)) { openDMs.unshift({id:dmId, name:t.username, avatar:t.avatar}); localStorage.setItem('echo_dms', JSON.stringify(openDMs)); } switchToHome(); switchChannel(dmId, t.username, true); }
-        window.removeDM = (id) => { openDMs = openDMs.filter(d=>d.id!==id); localStorage.setItem('echo_dms', JSON.stringify(openDMs)); renderChannelList(); if(activeChannelId === id) switchToHome(); }
+        
+        function parseMarkdown(text) { return text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*(.*?)\*/g,'<em>$1</em>').replace(/```(.*?)```/gs,'<pre class="md-pre"><code>$1</code></pre>').replace(/`(.*?)`/g,'<code class="md-code">$1</code>'); }
+        
+        async function promptDeleteMessage(docId) { openGenericModal("Delete Message", "Confirm deletion?", "", async () => await deleteDoc(doc(db,'artifacts',APP_ID,'public','data','messages',docId)), true); }
+        
+        function toggleMobileMenu(force) { const s = document.getElementById('sidebar-container'); const o = document.getElementById('mobile-overlay'); if(force !== undefined) { if(force) { s.classList.add('mobile-open'); o.classList.remove('hidden'); } else { s.classList.remove('mobile-open'); o.classList.add('hidden'); } } else { s.classList.toggle('mobile-open'); o.classList.toggle('hidden'); } }
+        
+        function showUserPopup(e,u) { if(u.uid === currentUser.uid) return; selectedUserForDM = u; const p = document.getElementById('user-popup'); document.getElementById('popup-username').textContent = u.username; document.getElementById('popup-avatar').src = u.avatar; const r = e.currentTarget.getBoundingClientRect(); p.style.top = Math.min(r.top, window.innerHeight-300)+'px'; p.style.left = Math.min((r.left-310), window.innerWidth-320)+'px'; p.classList.remove('hidden'); }
+        
+        function startDM() { if(!selectedUserForDM) return; const t = selectedUserForDM; const ids = [currentUser.uid, t.uid].sort(); const dmId = `dm_${ids[0]}_${ids[1]}`; if(!openDMs.find(d=>d.id===dmId)) { openDMs.unshift({id:dmId, name:t.username, avatar:t.avatar}); localStorage.setItem('echo_dms', JSON.stringify(openDMs)); } switchToHome(); switchChannel(dmId, t.username, true); }
+        
+        function removeDM(id) { openDMs = openDMs.filter(d=>d.id!==id); localStorage.setItem('echo_dms', JSON.stringify(openDMs)); renderChannelList(); if(activeChannelId === id) switchToHome(); }
+        
         let typingUsers = new Set(); let unsubscribeTyping = null;
         function listenToTyping() { if(!activeChannelId) return; if(unsubscribeTyping) unsubscribeTyping(); const q = query(collection(db,'artifacts',APP_ID,'public','data','typing'), where('channelId','==',activeChannelId)); unsubscribeTyping = onSnapshot(q,(s)=>{ const now = Date.now(); const activeTypers = []; typingUsers.clear(); s.forEach(d=>{ const data = d.data(); if(data.userId !== currentUser.uid && (now - data.timestamp) < 3000){ activeTypers.push(data.username); typingUsers.add(data.userId); }}); const i = document.getElementById('typing-indicator'); const t = document.getElementById('typing-names'); if(activeTypers.length > 0){ i.classList.remove('opacity-0'); if(activeTypers.length === 1) t.textContent = `${activeTypers[0]} is typing...`; else t.textContent = "Several people are typing..."; } else { i.classList.add('opacity-0'); }}); }
+        
         async function sendTyping() { if(!activeChannelId) return; await setDoc(doc(db,'artifacts',APP_ID,'public','data','typing',currentUser.uid), { userId: currentUser.uid, username: currentUser.displayName, channelId: activeChannelId, timestamp: Date.now() }); }
-        window.openSettings = () => { document.getElementById('settings-username').value = currentUser.displayName; document.getElementById('settings-avatar-url').value = currentUser.photoURL; document.getElementById('settings-avatar-preview').src = currentUser.photoURL; document.getElementById('settings-modal').classList.remove('hidden'); setTimeout(()=>document.getElementById('settings-modal').classList.remove('opacity-0'), 10); }
-        window.closeSettings = () => { document.getElementById('settings-modal').classList.add('opacity-0'); setTimeout(()=>document.getElementById('settings-modal').classList.add('hidden'), 200); }
-        window.saveSettings = async () => { const name = document.getElementById('settings-username').value; const avatar = document.getElementById('settings-avatar-url').value; if(name) { await updateProfile(currentUser, { displayName: name, photoURL: avatar }); localStorage.setItem('vc_username', name); updateUserUI(); closeSettings(); } }
+        
+        function openSettings() { document.getElementById('settings-username').value = currentUser.displayName; document.getElementById('settings-avatar-url').value = currentUser.photoURL; document.getElementById('settings-avatar-preview').src = currentUser.photoURL; document.getElementById('settings-modal').classList.remove('hidden'); setTimeout(()=>document.getElementById('settings-modal').classList.remove('opacity-0'), 10); }
+        function closeSettings() { document.getElementById('settings-modal').classList.add('opacity-0'); setTimeout(()=>document.getElementById('settings-modal').classList.add('hidden'), 200); }
+        async function saveSettings() { const name = document.getElementById('settings-username').value; const avatar = document.getElementById('settings-avatar-url').value; if(name) { await updateProfile(currentUser, { displayName: name, photoURL: avatar }); localStorage.setItem('vc_username', name); updateUserUI(); closeSettings(); } }
+        
         const msgInput = document.getElementById('message-input');
         msgInput.addEventListener('keydown', async (e) => { sendTyping(); if (e.key === 'Enter' && e.target.value.trim() !== '') { const text = e.target.value; e.target.value = ''; await addDoc(collection(db,'artifacts',APP_ID,'public','data','messages'), { content: text, timestamp: Date.now(), channelId: activeChannelId, userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL }); } });
+
+        // Expose to window for HTML onclick
+        window.openGenericModal = openGenericModal;
+        window.closeGenericModal = closeGenericModal;
+        window.openCreateServerModal = openCreateServerModal;
+        window.openJoinServerModal = openJoinServerModal;
+        window.promptCreateChannel = promptCreateChannel;
+        window.deleteChannel = deleteChannel;
+        window.copyServerInvite = copyServerInvite;
+        window.toggleRecording = toggleRecording;
+        window.editMessage = editMessage;
+        window.submitEdit = submitEdit;
+        window.switchServer = switchServer;
+        window.switchToHome = switchToHome;
+        window.switchChannel = switchChannel;
+        window.promptDeleteMessage = promptDeleteMessage;
+        window.toggleMobileMenu = toggleMobileMenu;
+        window.showUserPopup = showUserPopup;
+        window.startDM = startDM;
+        window.removeDM = removeDM;
+        window.openSettings = openSettings;
+        window.closeSettings = closeSettings;
+        window.saveSettings = saveSettings;
+        window.joinVoice = joinVoice;
+        window.disconnectVoice = disconnectVoice;
+        window.toggleVoiceMute = toggleVoiceMute;
+        window.toggleVoiceDeafen = toggleVoiceDeafen;
+        window.toggleReaction = toggleReaction;
+
     </script>
 </body>
 </html>
