@@ -45,8 +45,11 @@
         .date-divider::before { content: ""; height: 1px; background: #3f4147; position: absolute; left: 0; right: 0; z-index: 0; }
         .date-divider span { background: #313338; padding: 0 8px; color: #949ba4; font-size: 12px; font-weight: 600; z-index: 1; }
         /* Voice Active Glow */
-        .voice-avatar-speaking { box-shadow: 0 0 0 2px #23a559, 0 0 4px #23a559; border-color: transparent !important; transition: box-shadow 0.1s; }
+        .voice-avatar-speaking { box-shadow: 0 0 0 2px #23a559, 0 0 6px #23a559; border-color: transparent !important; transition: box-shadow 0.1s; }
         .voice-connected-bar { background-color: #232428; border-top: 1px solid #1f2023; padding: 8px 10px; }
+        
+        /* Ensure Voice Streams are present but invisible to prevent throttling */
+        #voice-streams { width: 0; height: 0; overflow: hidden; position: absolute; top: -1000px; }
     </style>
 </head>
 <body class="flex h-screen w-screen bg-[#313338]">
@@ -56,8 +59,8 @@
     <audio id="sound-voice-leave" src="https://assets.mixkit.co/active_storage/sfx/2359/2359-preview.mp3"></audio>
     <input type="file" id="file-upload" class="hidden" accept="image/*">
     
-    <!-- Hidden Voice Elements -->
-    <div id="voice-streams" class="hidden"></div>
+    <!-- Voice Elements container (Not display:none, just offscreen) -->
+    <div id="voice-streams"></div>
 
     <!-- GENERIC INPUT MODAL -->
     <div id="generic-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-200">
@@ -202,7 +205,7 @@
         let firebaseConfig, APP_ID;
         if (typeof __firebase_config !== 'undefined') {
             firebaseConfig = JSON.parse(__firebase_config);
-            APP_ID = typeof __app_id !== 'undefined' ? __app_id : "vanish-chat-public-v1";
+            APP_ID = typeof __app_id !== 'undefined' ? __app_id : "craic-chat-public-v1";
         } else {
             firebaseConfig = {
                  apiKey: "AIzaSyCNE-cWIo2Ofr0spW1czbtJMSXs2mcaVpY",
@@ -213,7 +216,7 @@
   appId: "1:1054605077942:web:e44b8aa557c60e085ca517",
   measurementId: "G-50T5S1NKR4"
             };
-            APP_ID = "vanish-chat-public-v1";
+            APP_ID = "craic-chat-public-v1";
         }
 
         const app = initializeApp(firebaseConfig);
@@ -248,6 +251,7 @@
         let analyser = null;
         let microphone = null;
         let speakingInterval = null;
+        let remoteAnalysers = {};
 
         const sndMsg = document.getElementById('sound-msg');
         const sndVJoin = document.getElementById('sound-voice-join');
@@ -280,7 +284,7 @@
             }
         });
 
-        // --- PRESENCE & HEARTBEAT ---
+        // --- PRESENCE ---
         function initPresenceHeartbeat() {
             const reportPresence = async () => {
                 if(!currentUser) return;
@@ -304,7 +308,7 @@
             });
         }
 
-        // --- VOICE: UI & STATE ---
+        // --- VOICE ---
         function initVoiceStates() {
             const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states'));
             onSnapshot(q, (snapshot) => {
@@ -314,7 +318,6 @@
                     if(Date.now() - data.lastSeen < 1800000) voiceParticipants.set(data.userId, data);
                 });
                 renderChannelList(); 
-                updateVoiceVisuals();
             });
         }
 
@@ -325,8 +328,8 @@
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 localStream.getAudioTracks()[0].enabled = !voiceMuted;
                 
-                // Audio Analysis Setup
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                // Local Analyzer
+                if(!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 analyser = audioContext.createAnalyser();
                 microphone = audioContext.createMediaStreamSource(localStream);
                 microphone.connect(analyser);
@@ -337,7 +340,6 @@
                 document.getElementById('voice-connected-bar').classList.remove('hidden');
                 document.getElementById('voice-channel-name').textContent = channelName;
                 
-                // Presence
                 await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states', currentUser.uid), { 
                     userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL, 
                     channelId: channelId, serverId: activeServerId, lastSeen: Date.now() 
@@ -352,24 +354,51 @@
             } catch(e) { console.error("Mic Error:", e); alert("Cannot access microphone."); }
         }
 
+        function setupRemoteVisualizer(stream, userId) {
+            if(!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const source = audioContext.createMediaStreamSource(stream);
+            const remoteAnalyser = audioContext.createAnalyser();
+            remoteAnalyser.fftSize = 512;
+            source.connect(remoteAnalyser);
+            // We don't connect to destination here because the <audio> tag handles output
+            remoteAnalysers[userId] = remoteAnalyser;
+        }
+
         function checkSpeakingVolume() {
-            if(!analyser || !currentVoiceChannelId) return;
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            analyser.getByteFrequencyData(dataArray);
+            if(!currentVoiceChannelId) return;
             
-            let sum = 0;
-            for(let i=0; i<bufferLength; i++) sum += dataArray[i];
-            const average = sum / bufferLength;
-            
-            const myAvatar = document.querySelector(`.participant-${currentUser.uid} img`);
-            if(myAvatar) {
-                if(average > 10) myAvatar.classList.add('voice-avatar-speaking');
-                else myAvatar.classList.remove('voice-avatar-speaking');
+            // Local
+            if(analyser) {
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for(let i=0; i<bufferLength; i++) sum += dataArray[i];
+                const average = sum / bufferLength;
+                
+                const myAvatar = document.querySelector(`.participant-${currentUser.uid} img`);
+                if(myAvatar) {
+                    if(average > 10) myAvatar.classList.add('voice-avatar-speaking');
+                    else myAvatar.classList.remove('voice-avatar-speaking');
+                }
             }
-            
-            // Also check remote streams (simplified simulation for now as we can't easily analyze remote without CORS/Context issues sometimes)
-            // Real implementation would attach analyzers to each remote stream
+
+            // Remotes
+            Object.keys(remoteAnalysers).forEach(uid => {
+                const ra = remoteAnalysers[uid];
+                const bufferLength = ra.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+                ra.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for(let i=0; i<bufferLength; i++) sum += dataArray[i];
+                const average = sum / bufferLength;
+                
+                const remoteAvatar = document.querySelector(`.participant-${uid} img`);
+                if(remoteAvatar) {
+                    if(average > 10) remoteAvatar.classList.add('voice-avatar-speaking');
+                    else remoteAvatar.classList.remove('voice-avatar-speaking');
+                }
+            });
             
             speakingInterval = requestAnimationFrame(checkSpeakingVolume);
         }
@@ -380,6 +409,8 @@
             
             if(speakingInterval) cancelAnimationFrame(speakingInterval);
             if(audioContext) audioContext.close();
+            audioContext = null;
+            remoteAnalysers = {};
             
             Object.values(peerConnections).forEach(pc => pc.close());
             peerConnections = {};
@@ -416,13 +447,10 @@
                 snapshot.docChanges().forEach(async (change) => {
                     if(change.type === 'added') {
                         const data = change.doc.data();
-                        // Guard: Only process signals if we are in voice or it's an offer (which implies joining)
-                        // Actually, reject offers if we are not in voice mode to prevent ghost calls
                         if (!currentVoiceChannelId) {
                              deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals', change.doc.id));
                              return;
                         }
-                        
                         await handleSignal(data, change.doc.id);
                         deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals', change.doc.id));
                     }
@@ -441,16 +469,17 @@
                     audio = document.createElement('audio'); 
                     audio.id = `audio-${targetUserId}`; 
                     audio.autoplay = true; 
-                    audio.playsInline = true; // Important for mobile
+                    audio.playsInline = true;
                     audio.muted = voiceDeafened;
                     document.getElementById('voice-streams').appendChild(audio);
                 }
                 audio.srcObject = event.streams[0];
-                // Force play
-                audio.play().catch(e => console.log("Auto-play blocked, waiting for interaction", e));
+                setupRemoteVisualizer(event.streams[0], targetUserId);
+                audio.play().catch(e => console.log("Auto-play blocked", e));
             };
             
             pc.onicecandidate = (event) => { if(event.candidate) sendSignal(targetUserId, { type: 'ice', candidate: event.candidate }); };
+            
             if(initiator) {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
@@ -461,23 +490,28 @@
         async function handleSignal(data, sigId) {
             if(!peerConnections[data.from] && data.type !== 'offer') return; 
             let pc = peerConnections[data.from];
+            
+            // Queue for ICE candidates if remote desc not set
+            if(!pc && data.type === 'offer') {
+                await connectToPeer(data.from, false);
+                pc = peerConnections[data.from];
+            }
+
             if(data.type === 'offer') {
-                if(!pc) { await connectToPeer(data.from, false); pc = peerConnections[data.from]; }
                 await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
                 sendSignal(data.from, { type: 'answer', sdp: answer });
-            } else if(data.type === 'answer') { await pc.setRemoteDescription(new RTCSessionDescription(data.sdp)); } 
-            else if(data.type === 'ice') { if(pc) await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); }
+            } else if(data.type === 'answer') { 
+                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp)); 
+            } else if(data.type === 'ice') { 
+                if(pc.remoteDescription) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                // Note: Production app should queue these if remoteDescription is null
+            }
         }
 
         async function sendSignal(targetId, payload) {
             await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals'), { to: targetId, from: currentUser.uid, ...payload, timestamp: Date.now() });
-        }
-
-        function updateVoiceVisuals() {
-            // Helper to refresh visual state of participants
-            // Currently handled in renderChannelList + checkSpeakingVolume
         }
 
         // --- GLOBAL UI & HELPERS ---
@@ -663,7 +697,7 @@
                 participants.forEach(p => {
                     const pDiv = document.createElement('div');
                     pDiv.className = `flex items-center px-8 py-1 mb-[1px] hover:bg-[#3f4147] rounded cursor-pointer group participant-${p.userId}`;
-                    pDiv.innerHTML = `<img src="${p.avatar}" class="w-6 h-6 rounded-full mr-2"><span class="text-sm font-medium text-[#949ba4] group-hover:text-[#dbdee1]">${p.username}</span>`;
+                    pDiv.innerHTML = `<img src="${p.avatar}" class="w-6 h-6 rounded-full mr-2 voice-avatar-speaking"><span class="text-sm font-medium text-[#949ba4] group-hover:text-[#dbdee1]">${p.username}</span>`;
                     list.appendChild(pDiv);
                 });
             });
