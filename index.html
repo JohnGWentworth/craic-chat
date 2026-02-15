@@ -44,7 +44,8 @@
         .date-divider { display: flex; align-items: center; justify-content: center; margin: 24px 0; position: relative; }
         .date-divider::before { content: ""; height: 1px; background: #3f4147; position: absolute; left: 0; right: 0; z-index: 0; }
         .date-divider span { background: #313338; padding: 0 8px; color: #949ba4; font-size: 12px; font-weight: 600; z-index: 1; }
-        .voice-avatar-speaking { box-shadow: 0 0 0 2px #23a559; border-color: transparent !important; }
+        /* Voice Active Glow */
+        .voice-avatar-speaking { box-shadow: 0 0 0 2px #23a559, 0 0 4px #23a559; border-color: transparent !important; transition: box-shadow 0.1s; }
         .voice-connected-bar { background-color: #232428; border-top: 1px solid #1f2023; padding: 8px 10px; }
     </style>
 </head>
@@ -55,8 +56,10 @@
     <audio id="sound-voice-leave" src="https://assets.mixkit.co/active_storage/sfx/2359/2359-preview.mp3"></audio>
     <input type="file" id="file-upload" class="hidden" accept="image/*">
     
+    <!-- Hidden Voice Elements -->
     <div id="voice-streams" class="hidden"></div>
 
+    <!-- GENERIC INPUT MODAL -->
     <div id="generic-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-200">
         <div class="bg-[#313338] w-full max-w-sm rounded-lg shadow-2xl p-6 transform scale-95 transition-transform duration-200" id="generic-modal-content">
             <h3 id="modal-title" class="text-xl font-bold text-white mb-4">Title</h3>
@@ -69,6 +72,7 @@
         </div>
     </div>
 
+    <!-- USER POPUP -->
     <div id="user-popup" class="fixed z-50 hidden" style="width: 300px;">
         <div class="bg-[#232428] rounded-lg shadow-2xl overflow-hidden border border-[#1e1f22]">
             <div class="h-16 bg-[#23a559]"></div>
@@ -84,6 +88,7 @@
         <div class="fixed inset-0 -z-10" onclick="document.getElementById('user-popup').classList.add('hidden')"></div>
     </div>
 
+    <!-- SETTINGS MODAL -->
     <div id="settings-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-200">
         <div class="bg-[#313338] w-full max-w-md rounded-lg shadow-2xl transform scale-95 transition-transform duration-200 m-4" id="settings-content">
             <div class="p-6">
@@ -197,10 +202,10 @@
         let firebaseConfig, APP_ID;
         if (typeof __firebase_config !== 'undefined') {
             firebaseConfig = JSON.parse(__firebase_config);
-            APP_ID = typeof __app_id !== 'undefined' ? __app_id : "craic-chat-public-v1";
+            APP_ID = typeof __app_id !== 'undefined' ? __app_id : "vanish-chat-public-v1";
         } else {
             firebaseConfig = {
-               apiKey: "AIzaSyCNE-cWIo2Ofr0spW1czbtJMSXs2mcaVpY",
+                 apiKey: "AIzaSyCNE-cWIo2Ofr0spW1czbtJMSXs2mcaVpY",
   authDomain: "craic-chat-50d71.firebaseapp.com",
   projectId: "craic-chat-50d71",
   storageBucket: "craic-chat-50d71.firebasestorage.app",
@@ -208,7 +213,7 @@
   appId: "1:1054605077942:web:e44b8aa557c60e085ca517",
   measurementId: "G-50T5S1NKR4"
             };
-            APP_ID = "craic-chat-public-v1";
+            APP_ID = "vanish-chat-public-v1";
         }
 
         const app = initializeApp(firebaseConfig);
@@ -239,6 +244,10 @@
         let voiceDeafened = false;
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         let onlineMembers = new Map();
+        let audioContext = null;
+        let analyser = null;
+        let microphone = null;
+        let speakingInterval = null;
 
         const sndMsg = document.getElementById('sound-msg');
         const sndVJoin = document.getElementById('sound-voice-join');
@@ -250,7 +259,7 @@
 
         onAuthStateChanged(auth, async (user) => {
             if (user) {
-                const savedName = localStorage.getItem('craic_username');
+                const savedName = localStorage.getItem('vc_username');
                 if (!user.displayName && !savedName) {
                     const rand = Math.floor(Math.random() * 9999);
                     await updateProfile(user, { displayName: `User${rand}`, photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${rand}` });
@@ -305,6 +314,7 @@
                     if(Date.now() - data.lastSeen < 1800000) voiceParticipants.set(data.userId, data);
                 });
                 renderChannelList(); 
+                updateVoiceVisuals();
             });
         }
 
@@ -314,28 +324,71 @@
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 localStream.getAudioTracks()[0].enabled = !voiceMuted;
+                
+                // Audio Analysis Setup
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                microphone = audioContext.createMediaStreamSource(localStream);
+                microphone.connect(analyser);
+                analyser.fftSize = 512;
+                
                 currentVoiceChannelId = channelId;
                 sndVJoin.play().catch(()=>{});
                 document.getElementById('voice-connected-bar').classList.remove('hidden');
                 document.getElementById('voice-channel-name').textContent = channelName;
+                
+                // Presence
                 await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states', currentUser.uid), { 
                     userId: currentUser.uid, username: currentUser.displayName, avatar: currentUser.photoURL, 
                     channelId: channelId, serverId: activeServerId, lastSeen: Date.now() 
                 });
+
                 const participants = Array.from(voiceParticipants.values()).filter(p => p.channelId === channelId && p.userId !== currentUser.uid);
                 participants.forEach(p => connectToPeer(p.userId, true));
+                
+                // Start Visualizer Loop
+                speakingInterval = requestAnimationFrame(checkSpeakingVolume);
+
             } catch(e) { console.error("Mic Error:", e); alert("Cannot access microphone."); }
+        }
+
+        function checkSpeakingVolume() {
+            if(!analyser || !currentVoiceChannelId) return;
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteFrequencyData(dataArray);
+            
+            let sum = 0;
+            for(let i=0; i<bufferLength; i++) sum += dataArray[i];
+            const average = sum / bufferLength;
+            
+            const myAvatar = document.querySelector(`.participant-${currentUser.uid} img`);
+            if(myAvatar) {
+                if(average > 10) myAvatar.classList.add('voice-avatar-speaking');
+                else myAvatar.classList.remove('voice-avatar-speaking');
+            }
+            
+            // Also check remote streams (simplified simulation for now as we can't easily analyze remote without CORS/Context issues sometimes)
+            // Real implementation would attach analyzers to each remote stream
+            
+            speakingInterval = requestAnimationFrame(checkSpeakingVolume);
         }
 
         async function disconnectVoice() {
             if(!currentVoiceChannelId) return;
             sndVLeave.play().catch(()=>{});
+            
+            if(speakingInterval) cancelAnimationFrame(speakingInterval);
+            if(audioContext) audioContext.close();
+            
             Object.values(peerConnections).forEach(pc => pc.close());
             peerConnections = {};
             if(localStream) localStream.getTracks().forEach(track => track.stop());
             localStream = null;
+
             document.getElementById('voice-connected-bar').classList.add('hidden');
             document.getElementById('voice-streams').innerHTML = '';
+            
             await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_states', currentUser.uid));
             currentVoiceChannelId = null;
         }
@@ -363,6 +416,13 @@
                 snapshot.docChanges().forEach(async (change) => {
                     if(change.type === 'added') {
                         const data = change.doc.data();
+                        // Guard: Only process signals if we are in voice or it's an offer (which implies joining)
+                        // Actually, reject offers if we are not in voice mode to prevent ghost calls
+                        if (!currentVoiceChannelId) {
+                             deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals', change.doc.id));
+                             return;
+                        }
+                        
                         await handleSignal(data, change.doc.id);
                         deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals', change.doc.id));
                     }
@@ -374,14 +434,22 @@
             const pc = new RTCPeerConnection(config);
             peerConnections[targetUserId] = pc;
             if(localStream) localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            
             pc.ontrack = (event) => {
                 let audio = document.getElementById(`audio-${targetUserId}`);
                 if(!audio) {
-                    audio = document.createElement('audio'); audio.id = `audio-${targetUserId}`; audio.autoplay = true; audio.muted = voiceDeafened;
+                    audio = document.createElement('audio'); 
+                    audio.id = `audio-${targetUserId}`; 
+                    audio.autoplay = true; 
+                    audio.playsInline = true; // Important for mobile
+                    audio.muted = voiceDeafened;
                     document.getElementById('voice-streams').appendChild(audio);
                 }
                 audio.srcObject = event.streams[0];
+                // Force play
+                audio.play().catch(e => console.log("Auto-play blocked, waiting for interaction", e));
             };
+            
             pc.onicecandidate = (event) => { if(event.candidate) sendSignal(targetUserId, { type: 'ice', candidate: event.candidate }); };
             if(initiator) {
                 const offer = await pc.createOffer();
@@ -407,7 +475,13 @@
             await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'voice_signals'), { to: targetId, from: currentUser.uid, ...payload, timestamp: Date.now() });
         }
 
-        function openGenericModal(title, desc, placeholder, onConfirm, isConfirmOnly = false) {
+        function updateVoiceVisuals() {
+            // Helper to refresh visual state of participants
+            // Currently handled in renderChannelList + checkSpeakingVolume
+        }
+
+        // --- GLOBAL UI & HELPERS ---
+        window.openGenericModal = (title, desc, placeholder, onConfirm, isConfirmOnly = false) => {
             const modal = document.getElementById('generic-modal');
             const content = document.getElementById('generic-modal-content');
             document.getElementById('modal-title').textContent = title;
@@ -423,26 +497,28 @@
             modal.classList.remove('hidden');
             setTimeout(() => { modal.classList.remove('opacity-0'); content.classList.remove('scale-95'); content.classList.add('scale-100'); }, 10);
         }
-        function closeGenericModal() { const modal = document.getElementById('generic-modal'); const content = document.getElementById('generic-modal-content'); modal.classList.add('opacity-0'); content.classList.add('scale-95'); content.classList.remove('scale-100'); setTimeout(() => modal.classList.add('hidden'), 200); }
+        window.closeGenericModal = () => { const modal = document.getElementById('generic-modal'); const content = document.getElementById('generic-modal-content'); modal.classList.add('opacity-0'); content.classList.add('scale-95'); content.classList.remove('scale-100'); setTimeout(() => modal.classList.add('hidden'), 200); }
 
-        function openCreateServerModal() {
+        window.openCreateServerModal = () => {
             openGenericModal("Create Server", "Give your new community a personality with a name.", "Server Name", async (name) => {
                 await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'servers'), { name: name, acronym: name.substring(0,2).toUpperCase(), ownerId: currentUser.uid });
             });
         }
 
-        function openJoinServerModal() {
+        window.openJoinServerModal = () => {
             openGenericModal("Join Server", "Enter an Invite ID below to join an existing server.", "Server ID", (id) => { switchServer(id); });
         }
 
-        function promptCreateChannel(type = 'text') {
+        window.promptCreateChannel = (type = 'text') => {
             openGenericModal("Create Channel", `Creating a new ${type} channel.`, "Channel Name", async (name) => {
-                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'channels'), { name: name.toLowerCase().replace(/\s/g, '-'), type: type, serverId: activeServerId });
+                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'channels'), { 
+                    name: name.toLowerCase().replace(/\s/g, '-'), type: type, serverId: activeServerId 
+                });
             });
         }
         
-        async function deleteChannel(id) { openGenericModal("Delete Channel", "Are you sure?", "", async () => { await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'channels', id)); }, true); }
-        function copyServerInvite() { if(!activeServerId || isHome) return; const inviteLink = window.location.origin + window.location.pathname + '?join=' + activeServerId; navigator.clipboard.writeText(inviteLink); alert("Invite Copied!"); };
+        window.deleteChannel = async (id) => { openGenericModal("Delete Channel", "Are you sure?", "", async () => { await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'channels', id)); }, true); }
+        window.copyServerInvite = () => { if(!activeServerId || isHome) return; const inviteLink = window.location.origin + window.location.pathname + '?join=' + activeServerId; navigator.clipboard.writeText(inviteLink); alert("Invite Copied!"); };
         function updateUserUI() { if(!currentUser) return; document.getElementById('user-name').textContent = currentUser.displayName; document.getElementById('user-avatar').src = currentUser.photoURL; }
 
         function initDataListeners() {
@@ -586,8 +662,8 @@
                 const participants = Array.from(voiceParticipants.values()).filter(p => p.channelId === c.id);
                 participants.forEach(p => {
                     const pDiv = document.createElement('div');
-                    pDiv.className = "flex items-center px-8 py-1 mb-[1px] hover:bg-[#3f4147] rounded cursor-pointer group";
-                    pDiv.innerHTML = `<img src="${p.avatar}" class="w-6 h-6 rounded-full mr-2 voice-avatar-speaking"><span class="text-sm font-medium text-[#949ba4] group-hover:text-[#dbdee1]">${p.username}</span>`;
+                    pDiv.className = `flex items-center px-8 py-1 mb-[1px] hover:bg-[#3f4147] rounded cursor-pointer group participant-${p.userId}`;
+                    pDiv.innerHTML = `<img src="${p.avatar}" class="w-6 h-6 rounded-full mr-2"><span class="text-sm font-medium text-[#949ba4] group-hover:text-[#dbdee1]">${p.username}</span>`;
                     list.appendChild(pDiv);
                 });
             });
